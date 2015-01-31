@@ -5,7 +5,6 @@ local quad  = require("quadratic")
 local cubic = require("cubic")
 -- this table contem the commands of a path
 
-local TOL = 0.001
 
 rvgcommand = {
     begin_open_contour = "M",
