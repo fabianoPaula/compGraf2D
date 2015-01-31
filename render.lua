@@ -195,7 +195,7 @@ function insidefill.path(shape, p)
 			local t = intersectionBezier1D(b,p)
 			if t then
 				local pt = bezier1D(b,t)
-				if p.x < pt[1] then
+				if p.x < b:calculatex(t) then
 					local dy = b['DerivateCoeff'][2]
 					windingnumber = windingnumber + sign(dy)
 				end
@@ -541,7 +541,9 @@ function _M.render(scene, viewport, file)
 	local img = image.image(width, height)
 	-- render
 	for i = 1, height do
-		stderr("\r%d%%", floor(1000*i/height)/10)
+		local percent = floor(1000*i/height)/10
+		stderr("\r%d%%", percent)
+
 		for j = 1, width do
 			img:set(j, i, sample(scene, j-0.5, i-0.5))
 		end
