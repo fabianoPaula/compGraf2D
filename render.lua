@@ -38,6 +38,13 @@ local function lerp2(x0, x1, x2, a, b)
     return lerp(x00, x01, b)
 end
 
+-- cubic interpolation
+local function lerp3(x0,x1,x2,x3,a,b,c)
+	local x00 = lerp2(x0,x1,x2,a,b)
+	local x01 = lerp2(x1,x2,x3,a,b)
+	return lerp(x00,x01,c)
+end
+
 -- cut canonic rational quadratic segment and recanonize
 local function cutr2s(a, b, x0, y0, x1, y1, w1, x2, y2)
     local u0 = lerp2(x0, x1, x2, a, a)
@@ -215,14 +222,25 @@ end
 
 -- override triangle creation and return a path instead
 function _M.triangle(x1, y1, x2, y2, x3, y3)
-    -- implement
-    return _M.path{} -- this shouldn't be empty, of course
+	return _M.path{_M.M,x1,y1,_M.L,x2,y2,_M.L,x3,y3,_M.L,x1,y1,_M.Z}
 end
 
 -- override polygon creation and return a path instead
 function _M.polygon(data)
-    -- implement
-    return _M.path{} -- this shouldn't be empty, of course
+	local inst = {}
+	inst[1] = _M.M
+	inst[2] = data[1]
+	inst[3] = data[2]
+	for i = 3, #data, 2 do 
+		inst[#inst + 1] = _M.L
+		inst[#inst + 1] = data[i]
+		inst[#inst + 1] = data[i+1]
+	end
+	inst[#inst + 1] = _M.L
+	inst[#inst + 1] = data[1]
+	inst[#inst + 1] = data[2]
+	inst[#inst+1] = _M.Z
+    return _M.path(inst) -- this shouldn't be empty, of course
 end
 
 -- verifies that there is nothing unsupported in the scene
