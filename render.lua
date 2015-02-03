@@ -87,6 +87,21 @@ local function bisectrationalquadratic(x0, x1, w1, x2)
     end
 end
 
+-- assumes monotonic and root in [0, 1]
+local function bissectline(   )
+    -- body
+end
+
+-- assumes monotonic and root in [0, 1]
+local function bissectquadratic( )
+    -- body
+end
+
+-- assumes monotonic and root in [0, 1]
+local function bissectcubic( )
+    -- body
+end
+
 -- transforms path by xf and ensures it is closed by a final segment
 local function newxformer(xf, forward)
     local fx, fy -- first contour cursor
@@ -173,6 +188,35 @@ local function newcleaner(forward)
     return cleaner
 end
 
+--retorna a tragetória dividida em segmentos monotônicos
+local function newmonotonizer(forward)
+    local monotonizer = {}
+    function monotonizer:begin_closed_contour(len, x0, y0)
+        forward:begin_closed_contour(_, x0, y0)
+    end
+    cleaner.begin_open_contour = cleaner.begin_closed_contour
+    function monotonizer:linear_segment(x0, y0, x1, y1)
+        forward:linear_segment(px, py, x1, y1)
+    end
+    function monotonizer:quadratic_segment(x0, y0, x1, y1, x2, y2)
+        forward:quadratic_segment(x0, y0, x1, y1, x2, y2)
+        forward:quadratic_segment(x0, y0, x1, y1, x2, y2)
+    end
+    function monotonizer:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
+        forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
+    end
+    function monotonizer:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
+        forward:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
+        forward:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
+        forward:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
+    end
+    function cleaner:end_closed_contour(len)
+        forward:end_closed_contour(_)
+    end
+    monotonizer.end_open_contour = monotonizer.end_closed_contour
+    return monotonizer
+end
+
 -- here is a function that returns a path transformed to
 -- pixel coordinates using the iterator trick I talked about
 -- you should chain your own implementation of monotonization!
@@ -182,18 +226,18 @@ function transformpath(oldpath, xf)
     newpath:open()
     oldpath:iterate(
         newxformer(xf * oldpath.xf,
-         -- newmonotonizer(
+          newmonotonizer(
                 newcleaner(
-                    newpath))) -- )
+                    newpath)))  )
     newpath:close()
     return newpath
 end
 
 -- prepare scene for sampling and return modified scene
 local function preparescene(scene)
-    -- implement
-    -- (feel free to use the transformpath function above)
-    return scene
+    local newscene = _M.scene()
+    -- monotoniza limpa e transforma pra pixel coordinates todas as paths
+    return newscene
 end
 
 -- override circle creation function and return a path instead
@@ -215,14 +259,21 @@ end
 
 -- override triangle creation and return a path instead
 function _M.triangle(x1, y1, x2, y2, x3, y3)
-    -- implement
-    return _M.path{} -- this shouldn't be empty, of course
+    --not finished
+    return _M.path{
+        _M.M , x1 , y1 , 
+        _M.L , x2 , y2 ,  
+        _M.L , x3 , y3 ,
+        _M.L , x1 , y1
+        _M.Z
+    }
 end
 
 -- override polygon creation and return a path instead
 function _M.polygon(data)
-    -- implement
-    return _M.path{} -- this shouldn't be empty, of course
+    --for i, coord in ipairs(data) do
+    --end
+    return _M.path{}
 end
 
 -- verifies that there is nothing unsupported in the scene
@@ -272,7 +323,8 @@ end
 
 -- clip scene against bounding-box and return a quadtree leaf
 local function scenetoleaf(scene, xmin, ymin, xmax, ymax)
-    -- implement
+    -- vai retornar a cena só os elemntos que estão com o centro dentro do BBOX
+    --lembrando que elementos agora só só paths
     return scene
 end
 
