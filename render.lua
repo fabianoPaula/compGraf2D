@@ -200,6 +200,9 @@ end
 local function preparescene(scene)
     -- implement
     -- (feel free to use the transformpath function above)
+	--
+	-- Por enquanto fica com a minha implementação
+	
     return scene
 end
 
@@ -298,6 +301,7 @@ end
 function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
     -- implement
     depth = depth or 1
+
     return leaf
 end
 
@@ -327,7 +331,7 @@ local function adjustviewport(vxmin, vymin, vxmax, vymax)
 end
 
 -- load your own svg driver here and use it for debugging!
-local svg = dofile"assign/svg.lua"
+local svg = dofile"svg.lua"
 
 -- append lines marking the tree bounding box to the scene
 local function appendbox(xmin, ymin, xmax, ymax, scene)
