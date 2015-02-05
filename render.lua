@@ -94,6 +94,77 @@ local function bisectrationalquadratic(x0, x1, w1, x2)
     end
 end
 
+
+local function recursivebisectline(x0, x1, ta, tb, n)
+    local tm = 0.5*(ta+tb)
+    local xm = lerp(x0, x1, tm)
+    if abs(xm) < TOL or n >= MAX_ITER then
+        return tm
+    else
+        n = n + 1
+        if xm < 0 then ta = tm
+        else tb = tm end
+        -- tail call
+        return recursivebisectline(x0, x1, ta, tb, n)
+    end
+end
+-- assumes monotonic and root in [0, 1]
+local function bisectline( x0 , x1 )
+    assert(x1*x0 <= 0, "no root in interval!")
+    if x0 > x1 then
+        return 1-recursivebisectline(x1, x0, 0, 1, 0)
+    else
+        return recursivebisectline(x0, x1, 0, 1, 0)
+    end
+end
+
+local function recursivebisectquadratic(x0, x1, x2, ta, tb, n)
+    local tm = 0.5*(ta+tb)
+    local xm = lerp2(x0, x1, x2, tm, tm)
+    if abs(xm) < TOL or n >= MAX_ITER then
+        return tm
+    else
+        n = n + 1
+        if xm < 0 then ta = tm
+        else tb = tm end
+        -- tail call
+        return recursivebisectquadratic(x0, x1, x2, ta, tb, n)
+    end
+end
+
+-- assumes monotonic and root in [0, 1]
+local function bisectquadratic( x0 , x1 , x2 )
+    assert(x2*x0 <= 0, "no root in interval!")
+    if x0 > x2 then
+        return 1-recursivebisectquadratic(x2 , x1, x0, 0, 1, 0)
+    else
+        return recursivebisectquadratic(x0, x1, x2, 0, 1, 0)
+    end
+end
+
+local function recursivebisectcubic(x0, x1, x2, x3, ta, tb, n)
+    local tm = 0.5*(ta+tb)
+    local xm = lerp3(x0, x1, x2, x3 , tm, tm, tm)
+    if abs(xm) < TOL or n >= MAX_ITER then
+        return tm
+    else
+        n = n + 1
+        if xm < 0 then ta = tm
+        else tb = tm end
+        -- tail call
+        return recursivebisectcubic(x0, x1, x2, x3, ta, tb, n)
+    end
+end
+-- assumes monotonic and root in [0, 1]
+local function bisectcubic( x0 , x1 , x2 , x3 )
+    assert(x3*x0 <= 0, "no root in interval!")
+   if x0 > x3 then
+        return 1-recursivebisectcubic(x3, x2, x1, x0, 0, 1, 0)
+    else
+        return recursivebisectcubic(x0, x1, x2, x3, 0, 1, 0)
+    end
+end
+
 -- transforms path by xf and ensures it is closed by a final segment
 local function newxformer(xf, forward)
     local fx, fy -- first contour cursor
@@ -180,6 +251,107 @@ local function newcleaner(forward)
     return cleaner
 end
 
+--retorna a tragetória dividida em segmentos monotônicos
+local function newmonotonizer(forward)
+    local monotonizer = {}
+    function monotonizer:begin_closed_contour(len, x0, y0)
+        forward:begin_closed_contour(_, x0, y0)
+    end
+    monotonizer.begin_open_contour = monotonizer.begin_closed_contour
+    function monotonizer:linear_segment(x0, y0, x1, y1)
+        forward:linear_segment(px, py, x1, y1) -- o segmento linear não precisa ser monotonizado
+    end
+    function monotonizer:quadratic_segment(x0, y0, x1, y1, x2, y2)
+        --descobre as raízes de x'(t) e y'(t) ordena os t's e usa lerp2 pra descobrir os pontos de controle          
+        local t = { 0 } -- valores de t para os pontos que representam os segmentos monotônicos 
+        local Qx = {} -- vetor da coordenada x dos novos pontos de controle
+        local Qy = {} -- vetor da coordenada y dos novos pontos de controle
+    
+        if ( x0 + x2 ~= 2*x1 ) then
+            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
+            if ( (x0 - x1)/(x0 - 2*x1 + x2) < 1 and (x0 - x1)/(x0 - 2*x1 + x2) > 0 ) then 
+                t[#t + 1] =  (x0 - x1)/(x0 - 2*x1 + x2)--raiz de x'(t) = 0
+            end
+            
+        end
+        if ( y0 + y2 ~= 2*y1 ) then
+            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
+            if ( (y0 - y1)/(y0 - 2*y1 + y2) < 1 and (y0 - y1)/(y0 - 2*y1 + y2) > 0 ) then 
+                t[#t + 1] =  (y0 - y1)/(y0 - 2*y1 + y2)--raiz de y'(t) = 0
+            end
+        end
+
+        t[#t + 1] = 1
+        --coloca os t's em ordem crescente ( Quick Sort)
+        t = table.sort(t, quicksort)
+        Qx[1] = x0
+        Qy[1] = y0
+        for i = 1, #t - 1  do
+            Qx[#Qx + 1] = lerp2(x0,x1,x2,x3,t[i],t[i+1])
+            Qx[#Qx + 1] = lerp2(x0,x1,x2,x3,t[i+1],t[i+1])
+            
+            Qy[#Qy + 1] = lerp2(y0,y1,y2,y3,t[i],t[i],t[i+1])
+            Qy[#Qy + 1] = lerp2(y0,y1,y2,y3,t[i],t[i+1],t[i+1])
+
+            --já pode dar o foward do quadratic segment pra esses 2 junto com o anterior
+            forward:quadratic_segment(Qx[#Qx - 2], Qy[#Qy - 2], Qx[#Qx - 1], Qy[#Qy - 1], Qx[#Qx], Qy[#Qy])
+        end
+   end
+    function monotonizer:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
+        forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
+        forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
+    end
+    function monotonizer:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
+        -- raciocínio análogo ao quadratic_segment
+        local t = { 0 } -- valores de t para os pontos que representam os segmentos monotônicos 
+        local Qx = {} -- vetor da coordenada x dos novos pontos de controle
+        local Qy = {} -- vetor da coordenada y dos novos pontos de controle
+        local solution
+        local t1, s1 , t2 , s2
+         solution , t1 , s1 , t2 , s2 = quadratic.quadratic( x3 - 3*x2 + 3*x1 - x0 , 2*x2 - 4*x1 + 2*x0 , x1 - x0 )
+         if ( solution == 2 ) then
+            if ( t1/s1 > 0 and t1/s1 < 1 )  then
+                t[#t + 1] = t1/s1
+            end 
+            if ( t2/s2 > 0 and t2/s2 < 1 and t2/s2 ~= t1/s1)  then
+                t[#t + 1] = t2/s2
+            end 
+         end
+
+         solution , t1 , s1 , t2 , s2 = quadratic.quadratic( y3 - 3*y2 + 3*y1 - y0 , 2*y2 - 4*y1 + 2*y0 , y1 - y0 )
+         if ( solution == 2) then
+            if ( t1/s1 > 0 and t1/s1 < 1 )  then
+                t[#t + 1] = t1/s1
+            end 
+            if (  t2/s2 > 0 and t2/s2 < 1 and t2/s2 ~= t1/s1 )  then
+                t[#t + 1] = t2/s2
+            end 
+         end
+         t[#t + 1] = 1
+        --coloca os t's em ordem crescente ( Quick Sort)
+        t = table.sort(t, quicksort)
+        Qx[1] = x0
+        Qy[1] = y0
+        for i = 1, #t - 1  do
+            Qx[#Qx + 1] = lerp3(x0,x1,x2,x3,t[i],t[i],t[i+1])
+            Qx[#Qx + 1] = lerp3(x0,x1,x2,x3,t[i],t[i+1],t[i+1])
+            Qx[#Qx + 1] = lerp3(x0,x1,x2,x3,t[i+1],t[i+1],t[i+1])
+
+            Qy[#Qy + 1] = lerp3(y0,y1,y2,y3,t[i],t[i],t[i+1])
+            Qy[#Qy + 1] = lerp3(y0,y1,y2,y3,t[i],t[i+1],t[i+1])
+            Qy[#Qy + 1] = lerp3(y0,y1,y2,y3,t[i+1],t[i+1],t[i+1])
+
+            --já pode dar o foward do cubic segment pra esses 3 junto com o anterior
+            forward:cubic_segment(Qx[#Qx - 3], Qy[#Qy - 3], Qx[#Qx - 2], Qy[#Qy - 2], Qx[#Qx - 1], Qy[#Qy - 1], Qx[#Qx], Qy[#Qy])
+        end
+    end
+    function cleaner:end_closed_contour(len)
+        forward:end_closed_contour(_)
+    end
+    monotonizer.end_open_contour = monotonizer.end_closed_contour
+    return monotonizer
+end
+
 -- here is a function that returns a path transformed to
 -- pixel coordinates using the iterator trick I talked about
 -- you should chain your own implementation of monotonization!
@@ -189,21 +361,19 @@ function transformpath(oldpath, xf)
     newpath:open()
     oldpath:iterate(
         newxformer(xf * oldpath.xf,
-         -- newmonotonizer(
+          newmonotonizer(
                 newcleaner(
-                    newpath))) -- )
+                    newpath)))  )
     newpath:close()
     return newpath
 end
 
 -- prepare scene for sampling and return modified scene
 local function preparescene(scene)
-    -- implement
-    -- (feel free to use the transformpath function above)
-	--
-	-- Por enquanto fica com a minha implementação
-	
-    return scene
+    local newscene = _M.scene()
+    --itera sobre a scena tranformando tudo em path
+    --itera sobre cada path, transpormando seus elementos em segmentos monotônicos, transformados e não-degenerados 
+    return newscene
 end
 
 -- override circle creation function and return a path instead
@@ -243,7 +413,7 @@ function _M.polygon(data)
 	inst[#inst + 1] = data[1]
 	inst[#inst + 1] = data[2]
 	inst[#inst+1] = _M.Z
-    return _M.path(inst) -- this shouldn't be empty, of course
+    return _M.path(inst) 
 end
 
 -- verifies that there is nothing unsupported in the scene
@@ -293,7 +463,7 @@ end
 
 -- clip scene against bounding-box and return a quadtree leaf
 local function scenetoleaf(scene, xmin, ymin, xmax, ymax)
-    -- implement
+    
     return scene
 end
 
@@ -401,7 +571,7 @@ function _M.render(scene, viewport, output, arguments)
     local qxmin, qymin, qxmax, qymax =
         adjustviewport(vxmin, vymin, vxmax, vymax)
     local quadtree = subdividescene(
-        scenetoleaf(scene, vxmin, vymin, vxmax, vymax),
+        scenetoleaf,(scene, vxmin, vymin, vxmax, vymax),
         qxmin, qymin, qxmax, qymax, maxdepth)
     stderr("preprocess in %.3fs\n", time:elapsed())
     time:reset()
