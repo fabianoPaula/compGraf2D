@@ -21,6 +21,7 @@ local MAX_DEPTH = 8 -- maximum quadtree depth
 
 local _M = driver.new()
 
+ 
 -- here are functions to cut a rational quadratic Bezier
 -- you can write your own functions to cut lines,
 -- integral quadratics, and cubics
@@ -194,15 +195,46 @@ local function newmonotonizer(forward)
     function monotonizer:begin_closed_contour(len, x0, y0)
         forward:begin_closed_contour(_, x0, y0)
     end
-    cleaner.begin_open_contour = cleaner.begin_closed_contour
+    monotonizer.begin_open_contour = monotonizer.begin_closed_contour
     function monotonizer:linear_segment(x0, y0, x1, y1)
         forward:linear_segment(px, py, x1, y1)
     end
     function monotonizer:quadratic_segment(x0, y0, x1, y1, x2, y2)
-        forward:quadratic_segment(x0, y0, x1, y1, x2, y2)
-        forward:quadratic_segment(x0, y0, x1, y1, x2, y2)
+        --descobre as raízes de x'(t) e y'(t) ordena os t's e usa lerp2 pra descobrir os pontos de controle          
+        --por enquanto só o caso mais geral suponto t2 > t1
+        local t1 = 0 
+        local t2 = 0
+        local xq1 , yq1 , xq2 , yq2
+        local xc1 , yc1 , xc2 , yc2 , xc3 , yc3
+        if ( x0 + x2 ~= 2*x1 and  ) then
+            t1 = (x0 - x1)/(x0 - 2*x1 + x2)
+        end
+        if ( y0 + y2 ~= 2*y1 ) then
+            t2 = (y0 - y1)/(y0 - 2*y1 + y2)
+        end
+        xq1 = lerp2(x0,x1,x2,t1,t1)
+        yq1 = lerp2(y0,y1,y2,t1,t1)
+        
+        xq2 = lerp2(x0,x1,x2,t2,t2)
+        yq2 = lerp2(y0,y1,y2,t2,t2)
+
+        xc1 = lerp2(x0,x1,x2,0,t1)
+        yc1 = lerp2(y0,y1,y2,0,t1)
+        
+        xc2 = lerp2(x0,x1,x2,t1,t2)
+        yc2 = lerp2(y0,y1,y2,t1,t2)
+
+        xc3 = lerp2(x0,x1,x2,1,t2)
+        yc3 = lerp2(y0,y1,y2,1,t2)
+
+        forward:quadratic_segment(x0, y0, xc1, yc1, xq1, yq1)
+        
+        forward:quadratic_segment(xq1, yq1, xc2, yc2, xq2, yq2)
+
+        forward:quadratic_segment(xq2, yq2, xc3, yc3, x2, y2)
     end
     function monotonizer:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
+        forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
         forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
     end
     function monotonizer:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
@@ -236,7 +268,8 @@ end
 -- prepare scene for sampling and return modified scene
 local function preparescene(scene)
     local newscene = _M.scene()
-    -- monotoniza limpa e transforma pra pixel coordinates todas as paths
+    --itera sobre a scena tranformando tudo em path
+    --itera sobre cada path, transpormando seus elementos em segmentos monotônicos, transformados e não-degenerados 
     return newscene
 end
 
@@ -323,8 +356,7 @@ end
 
 -- clip scene against bounding-box and return a quadtree leaf
 local function scenetoleaf(scene, xmin, ymin, xmax, ymax)
-    -- vai retornar a cena só os elemntos que estão com o centro dentro do BBOX
-    --lembrando que elementos agora só só paths
+    
     return scene
 end
 
@@ -431,7 +463,7 @@ function _M.render(scene, viewport, output, arguments)
     local qxmin, qymin, qxmax, qymax =
         adjustviewport(vxmin, vymin, vxmax, vymax)
     local quadtree = subdividescene(
-        scenetoleaf(scene, vxmin, vymin, vxmax, vymax),
+        scenetoleaf,(scene, vxmin, vymin, vxmax, vymax),
         qxmin, qymin, qxmax, qymax, maxdepth)
     stderr("preprocess in %.3fs\n", time:elapsed())
     time:reset()
