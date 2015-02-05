@@ -376,6 +376,80 @@ local function preparescene(scene)
     return newscene
 end
 
+
+-- This is to get the x coordinates
+-- works for vertical lines
+local cx = {}
+cx.get = function(a,p)
+	return a[1],p[1]
+end
+
+-- This is to get the y coordinates
+-- works for horizontal lines
+local cy = {}
+cy.get = function(a,p)
+	return a[2],p[2]
+end
+
+local bt = {}
+bt.get = function(u,v)
+	return u > v
+end
+
+local bte = {}
+bte.get = function(u,v)
+	return u >= v
+end
+
+local lt = {}
+lt.get = function(u,v)
+	return u < v
+end
+
+local lte = {}
+lte.get = function(u,v)
+	return u <= v
+end
+
+-- coord: THis will be cx o cy
+-- op: lt,lte,bt,bte
+-- value = {xvalue,yvalue}
+local function clip(coord,op,value,oldpath)
+	local newpath = _M.path()
+	newpath:open()
+	local fx,fy -- the first point inside the path
+	local px,py -- the last point added to the new path
+
+	local iterator = {}
+	function iterator:begin_closed_contour(len,x0,y0)
+		if op.get(coord.get(value,{x0,y0})) then
+			px, py = x0,y0
+			fx, fy = x0,y0
+		end
+	end
+	iterator:begin_open_contour = iterator:end_closed_contour
+	function iterator:linear_segment(x0,y0,x1,y1)
+
+	end
+
+	function iterator:quadratic_segment(x0,y0,x1,y1,x2,y2)
+	end
+
+	function iterator:rational_quadratic_segment(x0,y0,x1,y1,w1,x2,y2)
+	end
+
+	function iterator:cubic_segment(x0,y0,x1,y1,x2,y2,x3,y3)
+	end
+
+	function iterator:end_closed_contour(len)
+	end
+	iterator:end_open_conutour = iterator:end_closed_contour
+
+	oldpath:iterate(iterator)
+	newpath:close()
+	return newpath
+end
+
 -- override circle creation function and return a path instead
 function _M.circle(cx, cy, r)
     -- we start with a unit circle centered at the origin
