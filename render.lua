@@ -20,24 +20,7 @@ local MAX_ITER = 30 -- maximum number of bisection iterations in root-finding
 local MAX_DEPTH = 8 -- maximum quadtree depth
 
 local _M = driver.new()
---[[
-local function quicksort( t )
-    local aux
-    if ( #t == 1) then
-        return t
-    else
-        local pivot = t[1]
-        for i = 1 , #t do 
-            if ( t[i] < pivot) then
-                aux = pivot
-                pivot = t[i]
-                t[i] = aux
-            end
-        end
-        return quicksort()
-    end
-end
---]]
+
 -- here are functions to cut a rational quadratic Bezier
 -- you can write your own functions to cut lines,
 -- integral quadratics, and cubics
@@ -111,19 +94,75 @@ local function bisectrationalquadratic(x0, x1, w1, x2)
     end
 end
 
+
+local function recursivebisectline(x0, x1, ta, tb, n)
+    local tm = 0.5*(ta+tb)
+    local xm = lerp(x0, x1, tm)
+    if abs(xm) < TOL or n >= MAX_ITER then
+        return tm
+    else
+        n = n + 1
+        if xm < 0 then ta = tm
+        else tb = tm end
+        -- tail call
+        return recursivebisectline(x0, x1, ta, tb, n)
+    end
+end
 -- assumes monotonic and root in [0, 1]
-local function bissectline(   )
-    -- body
+local function bisectline( x0 , x1 )
+    assert(x1*x0 <= 0, "no root in interval!")
+    if x0 > x1 then
+        return 1-recursivebisectline(x1, x0, 0, 1, 0)
+    else
+        return recursivebisectline(x0, x1, 0, 1, 0)
+    end
+end
+
+local function recursivebisectquadratic(x0, x1, x2, ta, tb, n)
+    local tm = 0.5*(ta+tb)
+    local xm = lerp2(x0, x1, x2, tm, tm)
+    if abs(xm) < TOL or n >= MAX_ITER then
+        return tm
+    else
+        n = n + 1
+        if xm < 0 then ta = tm
+        else tb = tm end
+        -- tail call
+        return recursivebisectquadratic(x0, x1, x2, ta, tb, n)
+    end
 end
 
 -- assumes monotonic and root in [0, 1]
-local function bissectquadratic( )
-    -- body
+local function bisectquadratic( x0 , x1 , x2 )
+    assert(x2*x0 <= 0, "no root in interval!")
+    if x0 > x2 then
+        return 1-recursivebisectquadratic(x2 , x1, x0, 0, 1, 0)
+    else
+        return recursivebisectquadratic(x0, x1, x2, 0, 1, 0)
+    end
 end
 
+local function recursivebisectcubic(x0, x1, x2, x3, ta, tb, n)
+    local tm = 0.5*(ta+tb)
+    local xm = lerp3(x0, x1, x2, x3 , tm, tm, tm)
+    if abs(xm) < TOL or n >= MAX_ITER then
+        return tm
+    else
+        n = n + 1
+        if xm < 0 then ta = tm
+        else tb = tm end
+        -- tail call
+        return recursivebisectcubic(x0, x1, x2, x3, ta, tb, n)
+    end
+end
 -- assumes monotonic and root in [0, 1]
-local function bissectcubic( )
-    -- body
+local function bisectcubic( x0 , x1 , x2 , x3 )
+    assert(x3*x0 <= 0, "no root in interval!")
+   if x0 > x3 then
+        return 1-recursivebisectcubic(x3, x2, x1, x0, 0, 1, 0)
+    else
+        return recursivebisectcubic(x0, x1, x2, x3, 0, 1, 0)
+    end
 end
 
 -- transforms path by xf and ensures it is closed by a final segment
