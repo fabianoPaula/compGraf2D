@@ -20,8 +20,24 @@ local MAX_ITER = 30 -- maximum number of bisection iterations in root-finding
 local MAX_DEPTH = 8 -- maximum quadtree depth
 
 local _M = driver.new()
-
- 
+--[[
+local function quicksort( t )
+    local aux
+    if ( #t == 1) then
+        return t
+    else
+        local pivot = t[1]
+        for i = 1 , #t do 
+            if ( t[i] < pivot) then
+                aux = pivot
+                pivot = t[i]
+                t[i] = aux
+            end
+        end
+        return quicksort()
+    end
+end
+--]]
 -- here are functions to cut a rational quadratic Bezier
 -- you can write your own functions to cut lines,
 -- integral quadratics, and cubics
@@ -197,50 +213,91 @@ local function newmonotonizer(forward)
     end
     monotonizer.begin_open_contour = monotonizer.begin_closed_contour
     function monotonizer:linear_segment(x0, y0, x1, y1)
-        forward:linear_segment(px, py, x1, y1)
+        forward:linear_segment(px, py, x1, y1) -- o segmento linear não precisa ser monotonizado
     end
     function monotonizer:quadratic_segment(x0, y0, x1, y1, x2, y2)
         --descobre as raízes de x'(t) e y'(t) ordena os t's e usa lerp2 pra descobrir os pontos de controle          
-        --por enquanto só o caso mais geral suponto t2 > t1
-        local t1 = 0 
-        local t2 = 0
-        local xq1 , yq1 , xq2 , yq2
-        local xc1 , yc1 , xc2 , yc2 , xc3 , yc3
-        if ( x0 + x2 ~= 2*x1 and  ) then
-            t1 = (x0 - x1)/(x0 - 2*x1 + x2)
+        local t = { 0 } -- valores de t para os pontos que representam os segmentos monotônicos 
+        local Qx = {} -- vetor da coordenada x dos novos pontos de controle
+        local Qy = {} -- vetor da coordenada y dos novos pontos de controle
+    
+        if ( x0 + x2 ~= 2*x1 ) then
+            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
+            if ( (x0 - x1)/(x0 - 2*x1 + x2) < 1 and (x0 - x1)/(x0 - 2*x1 + x2) > 0 ) then 
+                t[#t + 1] =  (x0 - x1)/(x0 - 2*x1 + x2)--raiz de x'(t) = 0
+            end
+            
         end
         if ( y0 + y2 ~= 2*y1 ) then
-            t2 = (y0 - y1)/(y0 - 2*y1 + y2)
+            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
+            if ( (y0 - y1)/(y0 - 2*y1 + y2) < 1 and (y0 - y1)/(y0 - 2*y1 + y2) > 0 ) then 
+                t[#t + 1] =  (y0 - y1)/(y0 - 2*y1 + y2)--raiz de y'(t) = 0
+            end
         end
-        xq1 = lerp2(x0,x1,x2,t1,t1)
-        yq1 = lerp2(y0,y1,y2,t1,t1)
-        
-        xq2 = lerp2(x0,x1,x2,t2,t2)
-        yq2 = lerp2(y0,y1,y2,t2,t2)
 
-        xc1 = lerp2(x0,x1,x2,0,t1)
-        yc1 = lerp2(y0,y1,y2,0,t1)
-        
-        xc2 = lerp2(x0,x1,x2,t1,t2)
-        yc2 = lerp2(y0,y1,y2,t1,t2)
+        t[#t + 1] = 1
+        --coloca os t's em ordem crescente ( Quick Sort)
+        t = table.sort(t, quicksort)
+        Qx[1] = x0
+        Qy[1] = y0
+        for i = 1, #t - 1  do
+            Qx[#Qx + 1] = lerp2(x0,x1,x2,x3,t[i],t[i+1])
+            Qx[#Qx + 1] = lerp2(x0,x1,x2,x3,t[i+1],t[i+1])
+            
+            Qy[#Qy + 1] = lerp2(y0,y1,y2,y3,t[i],t[i],t[i+1])
+            Qy[#Qy + 1] = lerp2(y0,y1,y2,y3,t[i],t[i+1],t[i+1])
 
-        xc3 = lerp2(x0,x1,x2,1,t2)
-        yc3 = lerp2(y0,y1,y2,1,t2)
-
-        forward:quadratic_segment(x0, y0, xc1, yc1, xq1, yq1)
-        
-        forward:quadratic_segment(xq1, yq1, xc2, yc2, xq2, yq2)
-
-        forward:quadratic_segment(xq2, yq2, xc3, yc3, x2, y2)
-    end
+            --já pode dar o foward do quadratic segment pra esses 2 junto com o anterior
+            forward:quadratic_segment(Qx[#Qx - 2], Qy[#Qy - 2], Qx[#Qx - 1], Qy[#Qy - 1], Qx[#Qx], Qy[#Qy])
+        end
+   end
     function monotonizer:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
         forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
         forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
     end
     function monotonizer:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
-        forward:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
-        forward:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
-        forward:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
+        -- raciocínio análogo ao quadratic_segment
+        local t = { 0 } -- valores de t para os pontos que representam os segmentos monotônicos 
+        local Qx = {} -- vetor da coordenada x dos novos pontos de controle
+        local Qy = {} -- vetor da coordenada y dos novos pontos de controle
+        local solution
+        local t1, s1 , t2 , s2
+         solution , t1 , s1 , t2 , s2 = quadratic.quadratic( x3 - 3*x2 + 3*x1 - x0 , 2*x2 - 4*x1 + 2*x0 , x1 - x0 )
+         if ( solution == 2 ) then
+            if ( t1/s1 > 0 and t1/s1 < 1 )  then
+                t[#t + 1] = t1/s1
+            end 
+            if ( t2/s2 > 0 and t2/s2 < 1 and t2/s2 ~= t1/s1)  then
+                t[#t + 1] = t2/s2
+            end 
+         end
+
+         solution , t1 , s1 , t2 , s2 = quadratic.quadratic( y3 - 3*y2 + 3*y1 - y0 , 2*y2 - 4*y1 + 2*y0 , y1 - y0 )
+         if ( solution == 2) then
+            if ( t1/s1 > 0 and t1/s1 < 1 )  then
+                t[#t + 1] = t1/s1
+            end 
+            if (  t2/s2 > 0 and t2/s2 < 1 and t2/s2 ~= t1/s1 )  then
+                t[#t + 1] = t2/s2
+            end 
+         end
+         t[#t + 1] = 1
+        --coloca os t's em ordem crescente ( Quick Sort)
+        t = table.sort(t, quicksort)
+        Qx[1] = x0
+        Qy[1] = y0
+        for i = 1, #t - 1  do
+            Qx[#Qx + 1] = lerp3(x0,x1,x2,x3,t[i],t[i],t[i+1])
+            Qx[#Qx + 1] = lerp3(x0,x1,x2,x3,t[i],t[i+1],t[i+1])
+            Qx[#Qx + 1] = lerp3(x0,x1,x2,x3,t[i+1],t[i+1],t[i+1])
+
+            Qy[#Qy + 1] = lerp3(y0,y1,y2,y3,t[i],t[i],t[i+1])
+            Qy[#Qy + 1] = lerp3(y0,y1,y2,y3,t[i],t[i+1],t[i+1])
+            Qy[#Qy + 1] = lerp3(y0,y1,y2,y3,t[i+1],t[i+1],t[i+1])
+
+            --já pode dar o foward do cubic segment pra esses 3 junto com o anterior
+            forward:cubic_segment(Qx[#Qx - 3], Qy[#Qy - 3], Qx[#Qx - 2], Qy[#Qy - 2], Qx[#Qx - 1], Qy[#Qy - 1], Qx[#Qx], Qy[#Qy])
+        end
     end
     function cleaner:end_closed_contour(len)
         forward:end_closed_contour(_)
