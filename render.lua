@@ -55,6 +55,13 @@ local function lerp2(x0, x1, x2, a, b)
     return lerp(x00, x01, b)
 end
 
+-- cubic interpolation
+local function lerp3(x0,x1,x2,x3,a,b,c)
+	local x00 = lerp2(x0,x1,x2,a,b)
+	local x01 = lerp2(x1,x2,x3,a,b)
+	return lerp(x00,x01,c)
+end
+
 -- cut canonic rational quadratic segment and recanonize
 local function cutr2s(a, b, x0, y0, x1, y1, w1, x2, y2)
     local u0 = lerp2(x0, x1, x2, a, a)
@@ -349,21 +356,25 @@ end
 
 -- override triangle creation and return a path instead
 function _M.triangle(x1, y1, x2, y2, x3, y3)
-    --not finished
-    return _M.path{
-        _M.M , x1 , y1 , 
-        _M.L , x2 , y2 ,  
-        _M.L , x3 , y3 ,
-        _M.L , x1 , y1
-        _M.Z
-    }
+	return _M.path{_M.M,x1,y1,_M.L,x2,y2,_M.L,x3,y3,_M.L,x1,y1,_M.Z}
 end
 
 -- override polygon creation and return a path instead
 function _M.polygon(data)
-    --for i, coord in ipairs(data) do
-    --end
-    return _M.path{}
+	local inst = {}
+	inst[1] = _M.M
+	inst[2] = data[1]
+	inst[3] = data[2]
+	for i = 3, #data, 2 do 
+		inst[#inst + 1] = _M.L
+		inst[#inst + 1] = data[i]
+		inst[#inst + 1] = data[i+1]
+	end
+	inst[#inst + 1] = _M.L
+	inst[#inst + 1] = data[1]
+	inst[#inst + 1] = data[2]
+	inst[#inst+1] = _M.Z
+    return _M.path(inst) 
 end
 
 -- verifies that there is nothing unsupported in the scene
@@ -421,6 +432,7 @@ end
 function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
     -- implement
     depth = depth or 1
+
     return leaf
 end
 
@@ -450,7 +462,7 @@ local function adjustviewport(vxmin, vymin, vxmax, vymax)
 end
 
 -- load your own svg driver here and use it for debugging!
-local svg = dofile"assign/svg.lua"
+local svg = dofile"svg.lua"
 
 -- append lines marking the tree bounding box to the scene
 local function appendbox(xmin, ymin, xmax, ymax, scene)
@@ -551,5 +563,6 @@ function _M.render(scene, viewport, output, arguments)
     image.png.store8(output, outputimage)
     stderr("saved in %.3fs\n", time:elapsed())
 end
+
 
 return _M
