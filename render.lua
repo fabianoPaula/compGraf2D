@@ -198,12 +198,209 @@ end
 
 -- prepare scene for sampling and return modified scene
 local function preparescene(scene)
-    -- implement
-    -- (feel free to use the transformpath function above)
-	--
-	-- Por enquanto fica com a minha implementação
 	
+	for k,e in ipairs(scene.elements) do
+		e.paint.xf = scene.xf * e.paint.xf
+		e.shape.xf = scene.xf * e.shape.xf
+	end
+
+	for k,e in ipairs(scene.elements) do
+
+		if e.shape['type'] == 'circle' then
+			local s = e.shape
+			local a,b,f,g = 1,1,-1*s.cy,-1*s.cx
+			local c = s.cx*s.cx + s.cy*s.cy - s.r*s.r
+			s.conic = xform.xform(a,0,g, 0,b,f, g,f,c)
+			s.conic = s.xf:inverse():transpose() * s.conic * s.xf:inverse() 
+			-- aplly the transform to the circle to be a ellipse for example
+			s.xmin, s.ymin, s.xmax, s.ymax = boundBox(s,s.conic)
+		end
+
+		if e.paint['type'] == 'lineargradient' then
+			local p = e.paint
+
+			local tp1 = xform.translate(unpack(p.data.p1)):inverse()
+
+			p.data.tp2 = {tp1:apply(unpack(p.data.p2))}
+
+			local degree = deg(atan2(p.data.tp2[2],p.data.tp2[1]))
+			local rot = xform.rotate(-degree)
+
+			-- rotate p2 to be in the x-axis
+			p.data.tp2 = {rot:apply(unpack(p.data.p2))}
+			p.data.px = p.data.tp2[1]
+			p.xf = rot*tp1*p.xf:inverse()
+		end
+
+		if e.paint['type'] == 'radialgradient' then
+			local p = e.paint
+
+			local center = p.data.center
+			local r = p.data.radius
+
+			-- use implicity representation
+			local a,b,f,g = 1,1,-center[2],-center[1]
+			local c = center[1]*center[1] + center[2]*center[2] - r*r
+			p.circle = xform.xform(a,0,g, 0,b,f, g,f,c)
+
+			-- translate the focus to the origin
+			local tfocus = xform.translate(unpack(p.data.focus)):inverse()
+
+			-- translate the focus to the origin, center and the circle
+			p.data.tcenter = {tfocus:apply(unpack(p.data.center))}
+			p.circle = tfocus:inverse():transpose() * p.circle * tfocus:inverse() 
+
+			assert(applytheconic(p.circle,p.data.tcenter[1],p.data.tcenter[2]) < 0, 
+			"the center is out of the conic")
+
+
+			local degree = deg(atan2(p.data.tcenter[2],p.data.tcenter[1]))
+			local rot = xform.rotate(-degree)
+
+			p.data.tcenter = {rot:apply(unpack(p.data.tcenter))}
+			p.circle = rot:inverse():transpose() * p.circle * rot:inverse() 
+
+			local centerscale = 1/p.data.tcenter[1]
+			local tscale = xform.scale(centerscale)
+
+			p.data.tcenter = {tscale:apply(unpack(p.data.tcenter))}
+			p.circle = tscale:inverse():transpose() * p.circle * tscale:inverse() 
+
+			assert( (p.circle[1] - p.circle[2+3]) < EPS, 
+			"problems with implicity representation of the circle in the radialgradient")
+
+			p.circleRadius = sqrt(abs(p.circle[3+6]/p.circle[1] - 1))
+			p.xf = rot * tscale * tfocus * p.xf:inverse()
+		end
+
+		if e.shape['type'] == 'path' then
+			local shape = e.shape
+			local xfs = e.shape.xf
+			local data = e.shape.data
+			local xmin,ymin,xmax,ymax = inf,inf,0,0
+			
+		    for i,v in ipairs(shape.instructions) do
+		        local o = shape.offsets[i]
+		        local s = rvgcommand[v]
+		        if s then
+		            if s == "M" then
+		                data[o+1],data[o+2] = xfs:apply(data[o+1],data[o+2])
+						xmin = min(xmin,data[o+1])
+						ymin = min(ymin,data[o+2])
+						xmax = max(xmax,data[o+1])
+						ymax = max(ymax,data[o+2])
+		            elseif s == "L" then
+		                data[o+2],data[o+3] = xfs:apply(data[o+2],data[o+3])
+						xmin = min(xmin,data[o+2])
+						ymin = min(ymin,data[o+3])
+						xmax = max(xmax,data[o+2])
+						ymax = max(ymax,data[o+3])
+		            elseif s == "Q" then
+		                data[o+2],data[o+3] = xfs:apply(data[o+2],data[o+3])
+		                data[o+4],data[o+5] = xfs:apply(data[o+4],data[o+5])
+						xmin = min(xmin,data[o+2],data[o+4])
+						ymin = min(ymin,data[o+3],data[o+5])
+						xmax = max(xmax,data[o+2],data[o+4])
+						ymax = max(ymax,data[o+3],data[o+5])
+        		    elseif s == "C" then
+		                data[o+2],data[o+3] = xfs:apply(data[o+2],data[o+3])
+		                data[o+4],data[o+5] = xfs:apply(data[o+4],data[o+5])
+		                data[o+6],data[o+7] = xfs:apply(data[o+6],data[o+7])
+						xmin = min(xmin,data[o+2],data[o+4],data[o+6])
+						ymin = min(ymin,data[o+3],data[o+5],data[o+7])
+						xmax = max(xmax,data[o+2],data[o+4],data[o+6])
+						ymax = max(ymax,data[o+3],data[o+5],data[o+7])
+		            elseif s == "R" then
+						data[o+2],data[o+3],data[o+4] = xfs:apply(data[o+2],
+											data[o+3],data[o+4])
+						data[o+5],data[o+6] = xfs:apply(data[o+5],data[o+6])
+						xmin = min(xmin,data[o+2],data[o+5])
+						ymin = min(ymin,data[o+3],data[o+6])
+						xmax = max(xmax,data[o+2],data[o+5])
+						ymax = max(ymax,data[o+3],data[o+6])
+		            end
+		        end
+		    end
+			shape.xmin = xmin
+			shape.ymin = ymin
+			shape.xmax = xmax
+			shape.ymax = ymax
+		end
+	end
     return scene
+end
+
+-- This is to get the x coordinates
+-- works for vertical lines
+local cx = {}
+cx.get = function(a,p)
+	return a[1],p[1]
+end
+
+-- This is to get the y coordinates
+-- works for horizontal lines
+local cy = {}
+cy.get = function(a,p)
+	return a[2],p[2]
+end
+
+local bt = {}
+bt.get = function(u,v)
+	return u > v
+end
+
+local bte = {}
+bte.get = function(u,v)
+	return u >= v
+end
+
+local lt = {}
+lt.get = function(u,v)
+	return u < v
+end
+
+local lte = {}
+lte.get = function(u,v)
+	return u <= v
+end
+
+-- coord: THis will be cx o cy
+-- op: lt,lte,bt,bte
+-- value = {xvalue,yvalue}
+local function clip(coord,op,value,oldpath)
+	local newpath = _M.path()
+	newpath:open()
+	local fx,fy -- the first point inside the path
+	local px,py -- the last point added to the new path
+
+	local iterator = {}
+	function iterator:begin_closed_contour(len,x0,y0)
+		if op.get(coord.get(value,{x0,y0})) then
+			px, py = x0,y0
+			fx, fy = x0,y0
+		end
+	end
+	iterator:begin_open_contour = iterator:end_closed_contour
+	function iterator:linear_segment(x0,y0,x1,y1)
+
+	end
+
+	function iterator:quadratic_segment(x0,y0,x1,y1,x2,y2)
+	end
+
+	function iterator:rational_quadratic_segment(x0,y0,x1,y1,w1,x2,y2)
+	end
+
+	function iterator:cubic_segment(x0,y0,x1,y1,x2,y2,x3,y3)
+	end
+
+	function iterator:end_closed_contour(len)
+	end
+	iterator:end_open_conutour = iterator:end_closed_contour
+
+	oldpath:iterate(iterator)
+	newpath:close()
+	return newpath
 end
 
 -- override circle creation function and return a path instead
@@ -230,20 +427,17 @@ end
 
 -- override polygon creation and return a path instead
 function _M.polygon(data)
-	local inst = {}
-	inst[1] = _M.M
-	inst[2] = data[1]
-	inst[3] = data[2]
+	local newpath = _M.path()
+	newpath:open()
+	newpath:begin_closed_contour(_,data[1],data[2])
+	local px,py = data[1],data[2]
 	for i = 3, #data, 2 do 
-		inst[#inst + 1] = _M.L
-		inst[#inst + 1] = data[i]
-		inst[#inst + 1] = data[i+1]
+		newpath:linear_segment(px,py,data[i],data[i+1])
+		px,py = data[i],data[i+1]
 	end
-	inst[#inst + 1] = _M.L
-	inst[#inst + 1] = data[1]
-	inst[#inst + 1] = data[2]
-	inst[#inst+1] = _M.Z
-    return _M.path(inst) -- this shouldn't be empty, of course
+	newpath:linear_segment(px,py,data[1],data[2])
+	newpath:close()
+    return newpath
 end
 
 -- verifies that there is nothing unsupported in the scene
