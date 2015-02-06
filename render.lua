@@ -298,8 +298,8 @@ local function newmonotonizer(forward)
         end
    end
     function monotonizer:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
-        forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
-        forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
+        forward:rational_quadratic_segment(cutr2s( , ,x0, y0, x1, y1, w1, x2, y2))
+        forward:rational_quadratic_segment(cutr2s( , ,x0, y0, x1, y1, w1, x2, y2))
     end
     function monotonizer:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
         -- raciocínio análogo ao quadratic_segment
@@ -371,7 +371,7 @@ end
 -- prepare scene for sampling and return modified scene
 local function preparescene(scene)
     local newscene = _M.scene()
-    --itera sobre a scena tranformando tudo em path
+    --itera sobre a cena tranformando tudo em path
     --itera sobre cada path, transpormando seus elementos em segmentos monotônicos, transformados e não-degenerados 
     return newscene
 end
@@ -416,6 +416,129 @@ function _M.polygon(data)
     return _M.path(inst) 
 end
 
+--funções de colorir
+local colour = {}
+
+function colour.solid(paint , x , y , r2 , b2 , g2 , a2)
+    local r , g , b , a
+    local r1 , g1 , b1 , a1 = unpack(paint.data)
+    a = a1 + a2*(1-a1)
+    r = (r1*a1 + r2*a2*(1-a1))/a
+    g = (g1*a1 + g2*a2*(1-a1))/a
+    b = (b1*a1 + b2*a2*(1-a1))/a
+    return r , g , b , a
+end
+
+
+--faz a interpolação tem que pegar os pontos de controle da rampa vizinhos ao ponto avaliado
+function colour.lineargradient(paint , xp , yp , r , g , b , a)
+    local rf , gf , bf , af
+    local r1 , g1 , b1 , a1
+    local r2 , g2 , b2 , a2 
+    local t1 , t2
+    local p1 = {x = paint.data.p1[1] , y = paint.data.p1[2]}
+    local p2 = {x = paint.data.p2[1] , y = paint.data.p2[2]}
+    
+    local p = { x = xp , y = yp}
+    local cos1 = cos_ang(p1 , p , p2)
+    local cos2 = cos_ang(p2 , p , p1)
+    local t = (cos1*dist(p1 , p))/dist(p1 , p2)
+    local ramp = paint.data.ramp
+    --se o ponto estiver na rampa, então descobre entre quais offsets, depois interpola
+    if cos1 > 0 and cos2 > 0 then
+        for i = 1 , #ramp , 2 do
+            if  ramp[i] > t then
+                r1 , g1 , b1 , a1 = unpack(ramp[i-1])
+                r2 , g2 , b2 , a2 = unpack(ramp[i+1])
+                t1 = ramp[i-2]
+                t2 = ramp[i]
+            end
+        end 
+        rf = r1*(t2 - t) + r2*(t - t1)
+        gf = g1*(t2 - t) + g2*(t - t1)
+        bf = b1*(t2 - t) + b2*(t - t1)
+        af = (a1*(t2 - t) + a2*(t - t1))*paint.opacity
+        return rf ,gf , bf , af
+    end
+    
+    if  cos1 <= 0 then
+        --põe a cor de p1
+        return unpack(ramp[2])
+    end
+    
+    if  cos2 <= 0 then
+        --põe a cor de p2
+       return unpack(ramp[#ramp]) 
+    end
+   
+end
+
+function colour.radialgradient(paint , xp , yp , r , g , b , a)
+    -- os parâmetras são o centro e o foco, bem como as cores inicial, final e o raio??
+    local rf , gf , bf , af
+    local r1 , g1 , b1 , a1
+    local r2 , g2 , b2 , a2 
+    local a , b , c
+    local m , n
+    local t 
+    local solution , t1 , t2 , s1 , s2 , p1 , p2 , p_inter
+    local centro = {x = paint.data.center[1] , y = paint.data.center[2]}
+    local foco = {x = paint.data.focus[1] , y = paint.data.focus[2]}
+    local p = { x = xp , y = yp}
+    local R = paint.data.radius
+    
+    foco.x = foco.x - centro.x
+    foco.y = foco.y - centro.y
+    p.x = p.x - centro.x
+    p.y = p.y - centro.y
+    centro.x = 0
+    centro.y = 0 
+    if (not ( p.x - foco.x == 0)) then
+        m = (p.y - foco.y)/(p.x - foco.x) --coeficiente angular da reta
+        n = (p.x*foco.y -p.y*foco.x)/(p.x - foco.x) --coeficiente linear da reta
+        a = m^2 + 1
+        b = 2*m*n
+        c = n^2 - R^2 
+        solution , t1 , s1 , t2 , s2 = quadratic.quadratic(a , b , c)
+        --pontos de intersecção com a circunferência
+        p1 = {x = t1/s1 , y = m*(t1/s1) + n }
+        p2 = {x = t2/s2 , y = m*(t2/s2) + n }
+    else
+        a = 1
+        b = 0
+        c = (foco.x)^2 - R^2
+        solution , t1 , s1 , t2 , s2 = quadratic.quadratic(a , b , c)
+        p1 = {x = foco.x , y = t1/s1 }
+        p2 = {x = foco.x , y = t2/s2 }
+    end
+    --devemos pegar aquele para o qual o produto escalar com relação ao foco é positivo 
+    if ( (p1.x - foco.x)*(p.x - foco.x) + (p1.y - foco.y)*(p.y - foco.y) > 0 ) then
+        p_inter = p1
+    else
+        p_inter = p2
+    end 
+    --determinação do t
+    t = dist(p , foco)/dist(p_inter , foco)
+    local ramp = paint.data.ramp
+    if (t < 1) then
+        for i = 1 , #ramp , 2 do
+            if  ramp[i] > t then
+                r1 , g1 , b1 , a1 = unpack(ramp[i-1])
+                r2 , g2 , b2 , a2 = unpack(ramp[i+1])
+                t1 = ramp[i-2]
+                t2 = ramp[i]
+            end
+        end 
+        rf = r1*(t2 - t) + r2*(t - t1)
+        gf = g1*(t2 - t) + g2*(t - t1)
+        bf = b1*(t2 - t) + b2*(t - t1)
+        af = (a1*(t2 - t) + a2*(t - t1))*paint.opacity
+        return rf ,gf , bf , af    
+    else        
+        return unpack(ramp[#ramp])
+    end
+    
+end
 -- verifies that there is nothing unsupported in the scene
 -- note that we only support paths!
 -- triangles, circles, and polygons were overriden
@@ -434,7 +557,13 @@ end
 -- descend on quadtree, find leaf containing x,y, use leaf
 -- to evaluate the color, and finally return r,g,b,a
 local function sample(quadtree, xmin, ymin, xmax, ymax, x, y)
-    -- implement
+    local leaf
+    local r , g , b , a
+    for i, path in ipairs(leaf.elements) do
+        local winding = 0
+        if(isInside( path , x , y))
+        --para cada um dos elements ( que são paths, verifica se a quadtree tá dentro)
+    end
     return 0, 0, 0, 1
 end
 
