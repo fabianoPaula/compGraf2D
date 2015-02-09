@@ -481,10 +481,10 @@ function isInside(element, xp , yp)
                    --considera só os pontos a esquerda do segmento e 0 < t <= 1
                    if ( (p1.x - p0.x)*t + p0.x > xp and t ~= 0 and x1 - x0 ~= 0) then
                         --se a reta for crescente , aumenta o winding number
-                        if((y1 - y0)/(x1 - x0) > 0) then 
+                        if((p1.y - p0.y)/(p1.x - p0.x) > 0) then 
                             winding = winding + 1
                         -- se for decrescente, diminui
-                        elseif ((y1 - y0)/(x1 - x0) < 0) then
+                        elseif ((p1.y - p0.y)/(p1.x - p0.x) < 0) then
                             winding = winding - 1
                         end
                    end
@@ -503,10 +503,10 @@ function isInside(element, xp , yp)
                    --considera só os pontos a esquerda do segmento e 0 < t <= 1
                    if ( (a.x)*t^2 + (b.x)*t + c.x > xp and t ~= 0 and x2 - x0 ~= 0) then
                         --se o segmento for crescente , aumenta o winding number
-                        if((y2 - y0)/(x2 - x0) > 0) then 
+                        if((p2.y - p0.y)/(p2.x - p0.x) > 0) then 
                             winding = winding + 1
                         -- se for decrescente, diminui
-                        elseif ((y2 - y0)/(x2 - x0) < 0) then
+                        elseif ((p2.y - p0.y)/(p2.x - p0.x) < 0) then
                             winding = winding - 1
                         end
                    end
@@ -526,10 +526,10 @@ function isInside(element, xp , yp)
                    --considera só os pontos a esquerda do segmento e 0 < t <= 1
                    if ( (a.x)*t^3 + (b.x)*t^2 + (c.x)*t + d.x > xp and t ~= 0 and x3 - x0 ~= 0) then
                         --se o segmento for crescente , aumenta o winding number
-                        if((y3 - y0)/(x3 - x0) > 0) then 
+                        if((p3.y - p0.y)/(p3.x - p0.x) > 0) then 
                             winding = winding + 1
                         -- se for decrescente, diminui
-                        elseif ((y3 - y0)/(x3 - x0) < 0) then
+                        elseif ((p3.y - p0.y)/(p3.x - p0.x) < 0) then
                             winding = winding - 1
                         end
                    end
@@ -537,7 +537,27 @@ function isInside(element, xp , yp)
 
                 p0 = p3
             else if s == "R" then
+                p1 = { x = shape.data[o+2] , y = shape.data[o+3] , z = shape.data[o+4]}
+                p2 = { x = shape.data[o+5] , y = shape.data[o+6] }
+                a = {x = p0.x - 2*p1.x + p2.x, y = p0.y - 2*p1.y + p2.y}
+                b = {x = -2*p0.x + 2*p1.x, y = -2*p0.y + 2*p1.y}
+                c = {x =  p0.x , y = p0.y}
+                --primeiro verifica se o ponto está dentro da BBOX do segmento
+                if (isInsideBbox(xp , yp , p0 , p2)) then
+                   t = bisectrationalquadratic(p0.y - yp , p1.y - yp , p1.z , p2.y - yp) -- t para o qual a curva intersecta o raio que sai do ponto
+                   --considera só os pontos a esquerda do segmento e 0 < t <= 1
+                   if ( --[[(a.x)*t^2 + (b.x)*t + c.x > xp]] and t ~= 0 and x2 - x0 ~= 0) then
+                        --se o segmento for crescente , aumenta o winding number
+                        if((p2.y - p0.y)/(p2.x - p0.x) > 0) then 
+                            winding = winding + 1
+                        -- se for decrescente, diminui
+                        elseif ((p2.y - p0.y)/(p2.x - p0.x) < 0) then
+                            winding = winding - 1
+                        end
+                   end
+                end 
 
+                p0 = p2
             end
         end       
     end
