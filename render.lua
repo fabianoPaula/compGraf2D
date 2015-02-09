@@ -21,8 +21,12 @@ local MAX_DEPTH = 8 -- maximum quadtree depth
 
 local _M = driver.new()
 
-
-
+--given an affine transform and a point's coordinates, returns the coordinates of the inverse transform in this point
+local function inverse( xf , x , y)
+    local xt  = ((x - xf[3])*xf[5] - (y - xf[6])*xf[2])/(xf[1]*xf[5] - xf[2]*xf[4])
+    local yt  = -((x - xf[3])*xf[4] - (y - xf[6])*xf[1])/(xf[1]*xf[5] - xf[2]*xf[4])
+    return xt , yt
+end
 -- here are functions to cut a rational quadratic Bezier
 -- you can write your own functions to cut lines,
 -- integral quadratics, and cubics
@@ -285,7 +289,7 @@ local function newmonotonizer(forward)
 
         t[#t + 1] = 1
         --coloca os t's em ordem crescente ( Quick Sort)
-        t = table.sort(t, quicksort)
+        table.sort(t, quicksort)
         Qx[1] = x0
         Qy[1] = y0
         for i = 1, #t - 1  do
@@ -300,8 +304,30 @@ local function newmonotonizer(forward)
         end
    end
     function monotonizer:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
-        forward:rational_quadratic_segment(cutr2s( , ,x0, y0, x1, y1, w1, x2, y2))
-        forward:rational_quadratic_segment(cutr2s( , ,x0, y0, x1, y1, w1, x2, y2))
+        local t = { 0 } -- valores de t para os pontos que representam os segmentos monotônicos    
+        
+        if ( x0 + x2 ~= 2*x1 ) then
+            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
+            if ( (x0 - x1)/(x0 - 2*x1 + x2) < 1 and (x0 - x1)/(x0 - 2*x1 + x2) > 0 ) then 
+                t[#t + 1] =  (x0 - x1)/(x0 - 2*x1 + x2)--raiz de x'(t) = 0
+            end
+            
+        end
+        
+        if ( y0 + y2 ~= 2*y1 ) then
+            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
+            if ( (y0 - y1)/(y0 - 2*y1 + y2) < 1 and (y0 - y1)/(y0 - 2*y1 + y2) > 0 ) then 
+                t[#t + 1] =  (y0 - y1)/(y0 - 2*y1 + y2)--raiz de y'(t) = 0
+            end
+        end
+
+        t[#t + 1] = 1
+        --coloca os t's em ordem crescente ( Quick Sort)
+        table.sort(t, quicksort)
+
+        for i = 1, #t - 1  do
+            forward:rational_quadratic_segment(cutr2s(t[i],t[i+1],x0,y0,x1,y1,w1,x2,y2))
+        end
     end
     function monotonizer:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
         -- raciocínio análogo ao quadratic_segment
@@ -373,8 +399,8 @@ end
 -- prepare scene for sampling and return modified scene
 local function preparescene(scene)
     local newscene = _M.scene()
-    --itera sobre a cena tranformando tudo em path
-    --itera sobre cada path, transpormando seus elementos em segmentos monotônicos, transformados e não-degenerados 
+    scene:iterate(newscene)
+    --transformpath(oldpath , xf)
     return newscene
 end
 
