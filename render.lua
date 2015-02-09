@@ -511,7 +511,7 @@ function isInside(element, xp , yp)
 
                 p0 = p3
             else if s == "R" then
-
+                
             end
         end       
     end
@@ -533,7 +533,40 @@ function isInside(element, xp , yp)
     end
 end
 
+local function composecolor(color,ncolor)
+    local r, g, b, a = unpack(color)
+    local nr, ng, nb, alpha = unpack(ncolor)
 
+    r = alpha*nr + (1-alpha)*r
+    g = alpha*ng + (1-alpha)*g
+    b = alpha*nb + (1-alpha)*b
+
+    return {r,g,b,a}
+end
+
+-- ending basic functions 
+
+-- begin gradient functions
+
+local function ajusttoramp(ramp,x)
+    local lambda, xmin, xmax,index = 0,0,0,0
+    for i = 1,#ramp-2,2 do
+        if (ramp[i] <= x) and (x <= ramp[i+2]) then
+            xmin, xmax = ramp[i], ramp[i+2]
+            index = i
+        end
+    end
+
+    local result = (x - xmin)/(xmax - xmin)
+
+    local r = (1 - result)*ramp[index+1][1] + result*ramp[index+3][1]
+    local g = (1 - result)*ramp[index+1][2] + result*ramp[index+3][2]
+    local b = (1 - result)*ramp[index+1][3] + result*ramp[index+3][3]
+    local a = (1 - result)*ramp[index+1][4] + result*ramp[index+3][4]
+    return r,g,b,a
+end
+
+-- ending gradient functions
 --funções de colorir
 local colour = {}
 
