@@ -511,7 +511,7 @@ function isInside(element, xp , yp)
 
                 p0 = p3
             else if s == "R" then
-                
+
             end
         end       
     end
@@ -532,7 +532,7 @@ function isInside(element, xp , yp)
         end
     end
 end
-
+--[[
 local function composecolor(color,ncolor)
     local r, g, b, a = unpack(color)
     local nr, ng, nb, alpha = unpack(ncolor)
@@ -567,6 +567,7 @@ local function ajusttoramp(ramp,x)
 end
 
 -- ending gradient functions
+--]]
 --funções de colorir
 local colour = {}
 
@@ -709,16 +710,22 @@ end
 -- to evaluate the color, and finally return r,g,b,a
 local function sample(quadtree, xmin, ymin, xmax, ymax, x, y)
     local leaf
-    local r , g , b , a
+    -- TODO : descend on quadtree, find leaf containing x,y
+    local r, g, b, a = unpack({255,255,255,1})
+    local r_ant , g_ant , b_ant , a_ant = unpack({255,255,255,0})
+    local xt , yt , xtg , ytg 
+
+    xtg , ytg = inverse(scene.xf ,inverse(element.paint.xf, x , y)) -- normalmente dá na msm
+    xt , yt = inverse(scene.xf ,x , y)
+    xt , yt = inverse(element.shape.xf ,xt , yt)
+
     for i, path in ipairs(leaf.elements) do
-        local winding = 0
-        if(isInside( path , x , y))
-        
-        --para cada um dos elements ( que são paths, verifica se a quadtree tá dentro)
-        
+        if(isInside( path , xt , yt))        
+            r , g , b , a = colour[element.paint.type](element.paint , xtg , ytg , r_ant , g_ant , b_ant , a_ant)
+            r_ant , g_ant , b_ant , a_ant = r , b , g , a       
         end
     end
-    return 0, 0, 0, 1
+    return r , g , b , a
 end
 
 -- this returns an iterator that prints the methods called
