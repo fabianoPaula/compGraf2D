@@ -46,11 +46,11 @@ function quadtree_meta.__index.check (self,x,y)
 		end
 	else
 		return self
-	-- if x ~= nil and x-self.left < self.width and y - self.top  < self.height then 
-	-- return self
-	-- else
-	-- return nil
-	-- end
+			if x-self.left < self.width and y - self.top  < self.height then 
+				return self
+			else
+				return nil
+			end
 	 end
 end
 
