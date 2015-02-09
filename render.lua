@@ -45,6 +45,241 @@ local function lerp3(x0,x1,x2,x3,a,b,c)
 	return lerp(x00,x01,c)
 end
 
+--- begin of clipping algorithm
+-- This is to get the x coordinates
+-- works for vertical lines
+local cx = {}
+cx.get = function(a,p)
+	return a[1]
+end
+
+-- This is to get the y coordinates
+-- works for horizontal lines
+local cy = {}
+cy.get  = function(a,p)
+	return a[2]
+end
+
+local bt = {}
+bt.get = function(u,v)
+	return u > v
+end
+
+local bte = {}
+bte.get = function(u,v)
+	return u >= v
+end
+
+local lt = {}
+lt.get = function(u,v)
+	return u < v
+end
+
+local lte = {}
+lte.get = function(u,v)
+	return u <= v
+end
+
+local function linear_intersection(x0,x1,w)
+	return (w - x0)/(x1 -x0)
+end
+
+local function quadratic_intersection(x0,x1,x2,w)
+	local a,b,c = quadratic_coefficients(x0,x1,x2)
+	local t
+	roots = { quadratic.quadratic(a,b,c-w)}
+	if roots[1] == 2 then
+		for i = 2,4,2 do
+			t = roots[i]/roots[i+1]
+			if t > 0 and t < 1 then
+				return t
+			end
+		end
+	end
+end
+
+local function cubic_intersection(x0,x1,x2,x3,w)
+	local a,b,c,d = cubic_coefficients(x0,x1,x2,x3)
+	local t 
+	roots = { cubic.cubic(a,b,c,d-w) }
+	for i = 2,#roots-1,2 do 
+		t = roots[i]/roots[i+1]
+		if t > 0 and t < 1 then
+			return t
+		end
+	end
+	
+end
+
+-- c(Cooridinate): this will be cx o cy
+-- o: lt,lte,bt,bte
+-- value = {xvalue,yvalue}
+local function clip(c,o,value,oldpath)
+	local newpath = _M.path()
+	newpath:open()
+	local fx,fy = nil,nil -- the first point inside the path
+	local px,py -- the last point added to the new path
+
+	local iterator = {}
+
+	function iterator:begin_closed_contour(len,x0,y0)
+		if o.get(c.get({x0,y0}),c.get(value)) then
+			px, py = x0,y0
+			fx, fy = x0,y0
+			newpath:begin_closed_contour(_,x0,y0)
+		end
+	end
+--	iterator:begin_open_contour = iterator:begin_closed_contour
+	function iterator:linear_segment(x0,y0,x1,y1)
+		if o.get(c.get({x0,y0}),c.get(value))
+			and o.get(c.get({x1,y1}),c.get(value)) then
+			if fx == nil then
+				fx, fy = x0,y0
+				newpath:begin_closed_contour(_,fx,fy)
+			end
+			newpath:linear_segment(x0,y0,x1,y1)
+			px,py = x1,y1
+		elseif not o.get(c.get({x0,y0}),c.get(value))
+			and o.get(c.get({x1,y1}),c.get(value)) then
+			local t = linear_intersection(c.get({x0,y0}),c.get({x1,y1}),c.get(value))
+			local px0 = lerp(x0,x1,t)
+			local py0 = lerp(y0,y1,t)
+			if fx == nil then
+				fx, fy = px0,py0
+				newpath:begin_closed_contour(_,fx,fy)
+			end
+			newpath:linear_segment(px,py,px0,py0)
+			newpath:linear_segment(px0,py0,x1,y1)
+			px,py = x1,y1
+		elseif o.get(c.get({x0,y0}),c.get(value)) 
+			and not o.get(c.get({x1,y1}),c.get(value)) then
+			if fx == nil then
+				fx, fy = x0,y0
+				newpath:begin_closed_contour(_,fx,fy)
+			end
+			local t = linear_intersection(c.get({x0,y0}),c.get({x1,y1}),c.get(value))
+			local px1 = lerp(x0,x1,t)
+			local py1 = lerp(y0,y1,t)
+			newpath:linear_segment(x0,y0,px1,py1)
+			px,py = px1,py1
+		end
+	end
+
+	function iterator:quadratic_segment(x0,y0,x1,y1,x2,y2)
+		if o.get(c.get({x0,y0}),c.get(value)) 
+			and o.get(c.get({x2,y2}),c.get(value)) then
+			if fx == nil then
+				fx, fy = x0,y0
+				newpath:begin_closed_contour(_,fx,fy)
+			end
+			newpath:quadratic_segment(x0,y0,x1,y1,x2,y2)
+			px,py = x2,y2
+		elseif not o.get(c.get({x0,y0}),c.get(value)) 
+			and o.get(c.get({x2,y2}),c.get(value)) then
+			local t = quadratic_intersection(c.get({x0,y0}),
+				c.get({x1,y1}),c.get({x2,y2}), c.get(value))
+			local px0 = lerp2(x0,x1,x2,t,t)
+			local py0 = lerp2(y0,y1,y2,t,t)
+
+			local px1 = lerp2(x0,x1,x2,t,1)
+			local py1 = lerp2(y0,y1,y2,t,1)
+			if fx == nil then
+				fx, fy = px0,py0
+				newpath:begin_closed_contour(_,fx,fy)
+			end
+			newpath:linear_segment(px,py,px0,py0)
+			newpath:quadratic_segment(px0,py0,px1,py1,x2,y2)
+			px,py = x2,y2
+
+		elseif o.get(c.get({x0,y0}),c.get(value)) 
+			and not o.get(c.get({x2,y2}),c.get(value)) then
+			if fx == nil then
+				fx, fy = x0,y0
+				newpath:begin_closed_contour(_,fx,fy)
+			end
+			local t = quadratic_intersection(c.get({x0,y0}),
+				c.get({x1,y1}),c.get({x2,y2}), c.get(value))
+			local px1 = lerp2(x0,x1,x2,0,t)
+			local py1 = lerp2(y0,y1,y2,0,t)
+
+			local px2 = lerp2(x0,x1,x2,t,t)
+			local py2 = lerp2(y0,y1,y2,t,t)
+			newpath:quadratic_segment(x0,y0,px1,py1,px2,py2)
+			px,py = px2,py2
+		end
+	end
+
+	function iterator:rational_quadratic_segment(x0,y0,x1,y1,w1,x2,y2)
+	end
+
+	function iterator:cubic_segment(x0,y0,x1,y1,x2,y2,x3,y3)
+		if o.get(c.get({x0,y0}),c.get(value)) 
+			and o.get(c.get({x3,y3}),c.get(value)) then
+			if fx == nil then
+				fx, fy = x0,y0
+				newpath:begin_closed_contour(_,fx,fy)
+			end
+			newpath:cubic_segment(x0,y0,x1,y1,x2,y2,x3,y3)
+			px,py = x3,y3
+		elseif not o.get(c.get({x0,y0}),c.get(value)) 
+			and o.get(c.get({x3,y3}),c.get(value)) then
+
+			local t = cubic_intersection(c.get({x0,y0}),c.get({x1,y1}),c.get({x2,y2}),c.get({x3,y3}),c.get(value))
+
+			local px0 = lerp3(x0,x1,x2,x3,t,t,t)
+			local py0 = lerp3(y0,y1,y2,y3,t,t,t)
+			if fx == nil then
+				fx, fy = px0,py0
+				newpath:begin_closed_contour(_,fx,fy)
+			end
+
+			local px1 = lerp3(x0,x1,x2,x3,t,t,1)
+			local py1 = lerp3(y0,y1,y2,y3,t,t,1)
+
+			local px2 = lerp3(x0,x1,x2,x3,t,1,1)
+			local py2 = lerp3(y0,y1,y2,y3,t,1,1)
+
+			newpath:linear_segment(px,py,px0,py0)
+			newpath:cubic_segment(px0,py0,px1,py1,px2,py2,x3,y3)
+			px,py = x3,y3
+		elseif o.get(c.get({x0,y0}),c.get(value)) 
+			and not o.get(c.get({x3,y3}),c.get(value)) then
+			if fx == nil then
+				fx, fy = x0,y0
+				newpath:begin_closed_contour(_,fx,fy)
+			end
+
+			local t = cubic_intersection(c.get({x0,y0}),c.get({x1,y1}),c.get({x2,y2}),c.get({x3,y3}),c.get(value))
+
+			local px1 = lerp3(x0,x1,x2,x3,0,0,t)
+			local py1 = lerp3(y0,y1,y2,y3,0,0,t)
+
+			local px2 = lerp3(x0,x1,x2,x3,0,t,t)
+			local py2 = lerp3(y0,y1,y2,y3,0,t,t)
+
+			local px3 = lerp3(x0,x1,x2,x3,t,t,t)
+			local py3 = lerp3(y0,y1,y2,y3,t,t,t)
+
+			newpath:cubic_segment(x0,x0,px1,py1,px2,py2,px3,py3)
+			px,py = px3,py3
+		end
+	end
+
+	function iterator:end_closed_contour(len)
+--		if abs(fx - px) > FLT_MIN and abs(fy - py) > FLT_MIN then
+--			newpath:linear_segment(px,py,fx,fy)
+--		end
+		newpath:end_closed_contour(_)
+	end
+--	iterator:end_open_conutour = iterator:end_closed_contour
+
+	oldpath:iterate(iterator)
+	newpath:close()
+	return newpath
+end
+
+--- end of clippping algorithm
+
 -- cut canonic rational quadratic segment and recanonize
 local function cutr2s(a, b, x0, y0, x1, y1, w1, x2, y2)
     local u0 = lerp2(x0, x1, x2, a, a)
@@ -283,7 +518,7 @@ local function newmonotonizer(forward)
 
         t[#t + 1] = 1
         --coloca os t's em ordem crescente ( Quick Sort)
-        t = table.sort(t, quicksort)
+        table.sort(t, quicksort)
         Qx[1] = x0
         Qy[1] = y0
         for i = 1, #t - 1  do
@@ -329,7 +564,7 @@ local function newmonotonizer(forward)
          end
          t[#t + 1] = 1
         --coloca os t's em ordem crescente ( Quick Sort)
-        t = table.sort(t, quicksort)
+        table.sort(t, quicksort)
         Qx[1] = x0
         Qy[1] = y0
         for i = 1, #t - 1  do
@@ -381,14 +616,14 @@ end
 -- works for vertical lines
 local cx = {}
 cx.get = function(a,p)
-	return a[1],p[1]
+	return a[1]
 end
 
 -- This is to get the y coordinates
 -- works for horizontal lines
 local cy = {}
-cy.get = function(a,p)
-	return a[2],p[2]
+cy.get  = function(a,p)
+	return a[2]
 end
 
 local bt = {}
@@ -411,10 +646,14 @@ lte.get = function(u,v)
 	return u <= v
 end
 
--- coord: THis will be cx o cy
+local function linear_intersection(x0,x1,w)
+	return (w - x0)/(x1 -x0)
+end
+
+-- c(Cooridinate): this will be cx o cy
 -- op: lt,lte,bt,bte
 -- value = {xvalue,yvalue}
-local function clip(coord,op,value,oldpath)
+local function clip(c,op,value,oldpath)
 	local newpath = _M.path()
 	newpath:open()
 	local fx,fy -- the first point inside the path
@@ -422,14 +661,40 @@ local function clip(coord,op,value,oldpath)
 
 	local iterator = {}
 	function iterator:begin_closed_contour(len,x0,y0)
-		if op.get(coord.get(value,{x0,y0})) then
+		if op.get(c.get(value,{x0,y0})) then
 			px, py = x0,y0
 			fx, fy = x0,y0
+			newpath:begin_closed_contour(_,x0,y0)
 		end
 	end
 	iterator:begin_open_contour = iterator:end_closed_contour
 	function iterator:linear_segment(x0,y0,x1,y1)
-
+		if op.get(c.get(value),c.get({x1,y1})) then 
+			if op.get(c.get(value),c.get({x0,y0}))then
+				newpath:linear_segment(x0,y0,x1,y1)
+				px,py = x1,y1
+			else
+				local t = linear_intersection(c.get({x0,y0}),
+						c.get({x1,y1}),c.get(value))
+				local tx1 = lerp(x0,x1,t)
+				local ty1 = lerp(y0,y1,t)
+				if abs(px - tx1) > FLT_MIN  abs(py - ty1) > FLT_MIN then
+					newpath:linear_segment(px,py,tx1,ty1)
+					px,py = tx1,ty1
+				end
+				newpath:linear_segment(px,py,x1,y1)
+				px, py = x1,y1
+			end
+		else
+			if op.get(c.get(value),c.get({x0,y0})) then
+				local t = linear_intersection(c.get({x0,y0}),
+						c.get({x1,y1}),c.get(value))
+				local tx1 = lerp(x0,y1,t) 
+				local ty1 = lerp(y0,y1,t)
+				newpath:linear_segment(x0,y0,tx1,ty1)
+				px,py = tx1,ty1
+			end
+		end
 	end
 
 	function iterator:quadratic_segment(x0,y0,x1,y1,x2,y2)
