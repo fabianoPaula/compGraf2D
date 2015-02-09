@@ -21,6 +21,8 @@ local MAX_DEPTH = 8 -- maximum quadtree depth
 
 local _M = driver.new()
 
+
+
 -- here are functions to cut a rational quadratic Bezier
 -- you can write your own functions to cut lines,
 -- integral quadratics, and cubics
@@ -416,6 +418,122 @@ function _M.polygon(data)
     return _M.path(inst) 
 end
 
+--função auxiliar, para saber se um ponto está dentro da BBOX de um segmento com extremos em p0 e p1
+local function isInsideBbox( xp , yp , p0 , p1 )
+    local xmin = math.min(p0.x , p1.x)
+    local xmax = math.max(p0.x , p1.x)
+    local ymin = math.min(p0.y , p1.y)
+    local ymax = math.max(p0.y , p1.y)
+
+    if ( xp > xmin and xp < xmax and yp > ymin and yp < ymax ) then
+        return true
+    end
+    return false
+end
+
+--função para verificar se o ponto amostrado está dentro de um determinado elemnto
+--assumindo que o elemento é uma path com segmentos monotônicos
+function isInside(element, xp , yp)  
+    local winding = 0 
+    local p0, p1 , p2 , p3
+    local a , b , c , d
+    local t
+    local shape = element.shape
+
+    for i,v in ipairs(shape.instructions) do
+        local o = shape.offsets[i]
+        local s = rvgcommand[v] 
+
+        if s then
+            if s == "M" then
+                p0 = { x = shape.data[o+1] , y = shape.data[o+2] }
+            elseif s == "L" then
+                p1 = { x = shape.data[o+2] , y = shape.data[o+3] }
+                --primeiro verifica se o ponto está dentro da BBOX do segmento
+                if (isInsideBbox(xp , yp , p0 , p1)) then
+                   t = bisectline(p0.y - yp , p1.y - yp) -- t para o qual a curva intersecta o raio que sai do ponto
+                   --considera só os pontos a esquerda do segmento e 0 < t <= 1
+                   if ( (p1.x - p0.x)*t + p0.x > xp and t ~= 0 and x1 - x0 ~= 0) then
+                        --se a reta for crescente , aumenta o winding number
+                        if((y1 - y0)/(x1 - x0) > 0) then 
+                            winding = winding + 1
+                        -- se for decrescente, diminui
+                        elseif ((y1 - y0)/(x1 - x0) < 0) then
+                            winding = winding - 1
+                        end
+                   end
+                end 
+                
+                p0 = p1
+            elseif s == "Q" then
+                p1 = { x = shape.data[o+2] , y = shape.data[o+3] }
+                p2 = { x = shape.data[o+4] , y = shape.data[o+5] }
+                a = {x = p0.x - 2*p1.x + p2.x, y = p0.y - 2*p1.y + p2.y}
+                b = {x = -2*p0.x + 2*p1.x, y = -2*p0.y + 2*p1.y}
+                c = {x =  p0.x , y = p0.y}
+                --primeiro verifica se o ponto está dentro da BBOX do segmento
+                if (isInsideBbox(xp , yp , p0 , p2)) then
+                   t = bisectquadratic(p0.y - yp , p1.y - yp , p2.y - yp) -- t para o qual a curva intersecta o raio que sai do ponto
+                   --considera só os pontos a esquerda do segmento e 0 < t <= 1
+                   if ( (a.x)*t^2 + (b.x)*t + c.x > xp and t ~= 0 and x2 - x0 ~= 0) then
+                        --se o segmento for crescente , aumenta o winding number
+                        if((y2 - y0)/(x2 - x0) > 0) then 
+                            winding = winding + 1
+                        -- se for decrescente, diminui
+                        elseif ((y2 - y0)/(x2 - x0) < 0) then
+                            winding = winding - 1
+                        end
+                   end
+                end 
+
+                p0 = p2
+            elseif s == "C" then
+                p1 = { x = shape.data[o+2] , y = shape.data[o+3] }
+                p2 = { x = shape.data[o+4] , y = shape.data[o+5] }
+                p3 = { x = shape.data[o+6] , y = shape.data[o+7] }
+                a = {x = p3.x - 3*p2.x + 3*p1.x - p0.x , y = p3.y - 3*p2.y + 3*p1.y - p0.y}
+                b = {x = 3*p2.x - 6*p1.x + 3*p0.x , y = 3*p2.y - 6*p1.y + 3*p0.y}
+                c = {x = 3*p1.x - 3*p0.x , y = 3*p1.y - 3*p0.y}
+                d = {x = p0.x , y = p0.y}
+                if (isInsideBbox(xp , yp , p0 , p3)) then
+                   t = bisectcubic(p0.y - yp , p1.y - yp , p2.y - yp , p3.y - yp) -- t para o qual a curva intersecta o raio que sai do ponto
+                   --considera só os pontos a esquerda do segmento e 0 < t <= 1
+                   if ( (a.x)*t^3 + (b.x)*t^2 + (c.x)*t + d.x > xp and t ~= 0 and x3 - x0 ~= 0) then
+                        --se o segmento for crescente , aumenta o winding number
+                        if((y3 - y0)/(x3 - x0) > 0) then 
+                            winding = winding + 1
+                        -- se for decrescente, diminui
+                        elseif ((y3 - y0)/(x3 - x0) < 0) then
+                            winding = winding - 1
+                        end
+                   end
+                end 
+
+                p0 = p3
+            else if s == "R" then
+
+            end
+        end       
+    end
+    ---[[
+    if (element.type == "fill")  then
+        if (cont == 0) then
+            return false
+        else 
+            return true
+        end
+    end  
+    --]]
+    if (element.type == "eofill") then
+        if (cont%2 == 0) then
+            return false
+        else 
+            return true
+        end
+    end
+end
+
+
 --funções de colorir
 local colour = {}
 
@@ -562,7 +680,10 @@ local function sample(quadtree, xmin, ymin, xmax, ymax, x, y)
     for i, path in ipairs(leaf.elements) do
         local winding = 0
         if(isInside( path , x , y))
+        
         --para cada um dos elements ( que são paths, verifica se a quadtree tá dentro)
+        
+        end
     end
     return 0, 0, 0, 1
 end
