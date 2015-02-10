@@ -21,6 +21,45 @@ local MAX_DEPTH = 8 -- maximum quadtree depth
 
 local _M = driver.new()
 
+
+-- override circle creation function and return a path instead
+function _M.circle(cx, cy, r)
+	assert(false, "Don't give suport for circles")
+    -- we start with a unit circle centered at the origin
+    -- it is formed by 3 arcs covering each third of the unit circle
+    local s = 0.5           -- sin(pi/6)
+    local c = 0.86602540378 -- cos(pi/6)
+    local w = s
+    return _M.path{
+        _M.M,  0,  1,
+        _M.R, -c,  s,  w, -c, -s,
+        _M.R,  0, -1,  w,  c, -s,
+        _M.R,  c,  s,  w,  0,  1,
+        _M.Z
+    -- transform it to the circle with given center and radius
+    }:scale(r, r):translate(cx, cy)
+end
+
+-- override triangle creation and return a path instead
+function _M.triangle(x1, y1, x2, y2, x3, y3)
+	return _M.path{_M.M,x1,y1,_M.L,x2,y2,_M.L,x3,y3,_M.L,x1,y1,_M.Z}
+end
+
+-- override polygon creation and return a path instead
+function _M.polygon(data)
+	local newpath = _M.path()
+	newpath:open()
+	newpath:begin_closed_contour(_,data[1],data[2])
+	local px,py = data[1],data[2]
+	for i = 3, #data, 2 do 
+		newpath:linear_segment(px,py,data[i],data[i+1])
+		px,py = data[i],data[i+1]
+	end
+	newpath:linear_segment(px,py,data[1],data[2])
+	newpath:close()
+    return newpath
+end
+
 -- here are functions to cut a rational quadratic Bezier
 -- you can write your own functions to cut lines,
 -- integral quadratics, and cubics
@@ -44,6 +83,50 @@ local function lerp3(x0,x1,x2,x3,a,b,c)
 	local x01 = lerp2(x1,x2,x3,a,b)
 	return lerp(x00,x01,c)
 end
+
+
+-- begin basic functions
+local function sign(n)
+	if n > 0 then
+		return 1
+	elseif n < 0 then 
+		return -1
+	else
+		return 0
+	end
+end
+
+local function composecolor(color,ncolor)
+	local r, g, b, a = unpack(color)
+	local nr, ng, nb, alpha = unpack(ncolor)
+
+	r = alpha*nr + (1-alpha)*r
+	g = alpha*ng + (1-alpha)*g
+	b = alpha*nb + (1-alpha)*b
+
+	return {r,g,b,a}
+end
+
+
+-- begin gradient functions
+local function ajusttoramp(ramp,x)
+	local lambda, xmin, xmax,index = 0,0,0,0
+	for i = 1,#ramp-2,2 do
+		if (ramp[i] <= x) and (x <= ramp[i+1]) then
+			xmin, xmax = ramp[i], ramp[i+2]
+			index = i
+		end
+	end
+
+	local result = (x - xmin)/(xmax - xmin)
+
+	local r = (1 - result)*ramp[index+1][1] + result*ramp[index+3][1]
+	local g = (1 - result)*ramp[index+1][2] + result*ramp[index+3][2]
+	local b = (1 - result)*ramp[index+1][3] + result*ramp[index+3][3]
+	local a = (1 - result)*ramp[index+1][4] + result*ramp[index+3][4]
+	return r,g,b,a
+end
+-- ending gradient functions
 
 --- begin of clipping algorithm
 -- This is to get the x coordinates
@@ -266,9 +349,6 @@ local function clip(c,o,value,oldpath)
 	end
 
 	function iterator:end_closed_contour(len)
---		if abs(fx - px) > FLT_MIN and abs(fy - py) > FLT_MIN then
---			newpath:linear_segment(px,py,fx,fy)
---		end
 		newpath:end_closed_contour(_)
 	end
 --	iterator:end_open_conutour = iterator:end_closed_contour
@@ -494,24 +574,31 @@ local function newmonotonizer(forward)
     end
     monotonizer.begin_open_contour = monotonizer.begin_closed_contour
     function monotonizer:linear_segment(x0, y0, x1, y1)
-        forward:linear_segment(px, py, x1, y1) -- o segmento linear não precisa ser monotonizado
+        forward:linear_segment(px, py, x1, y1) 
+		-- o segmento linear não precisa ser monotonizado
     end
     function monotonizer:quadratic_segment(x0, y0, x1, y1, x2, y2)
-        --descobre as raízes de x'(t) e y'(t) ordena os t's e usa lerp2 pra descobrir os pontos de controle          
-        local t = { 0 } -- valores de t para os pontos que representam os segmentos monotônicos 
+        --descobre as raízes de x'(t) e y'(t) ordena os t's e usa lerp2 pra 
+		--descobrir os pontos de controle          
+        local t = { 0 } -- valores de t para os pontos que representam 
+						-- os segmentos monotônicos 
         local Qx = {} -- vetor da coordenada x dos novos pontos de controle
         local Qy = {} -- vetor da coordenada y dos novos pontos de controle
     
         if ( x0 + x2 ~= 2*x1 ) then
-            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
-            if ( (x0 - x1)/(x0 - 2*x1 + x2) < 1 and (x0 - x1)/(x0 - 2*x1 + x2) > 0 ) then 
+            --caso a raiz não caia no intervalo [0,1], 
+			--o resultado não nos interessa
+            if ( (x0 - x1)/(x0 - 2*x1 + x2) < 1 
+				and (x0 - x1)/(x0 - 2*x1 + x2) > 0 ) then 
                 t[#t + 1] =  (x0 - x1)/(x0 - 2*x1 + x2)--raiz de x'(t) = 0
             end
             
         end
         if ( y0 + y2 ~= 2*y1 ) then
-            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
-            if ( (y0 - y1)/(y0 - 2*y1 + y2) < 1 and (y0 - y1)/(y0 - 2*y1 + y2) > 0 ) then 
+            --caso a raiz não caia no intervalo [0,1], 
+			--o resultado não nos interessa
+            if ( (y0 - y1)/(y0 - 2*y1 + y2) < 1 
+				and (y0 - y1)/(y0 - 2*y1 + y2) > 0 ) then 
                 t[#t + 1] =  (y0 - y1)/(y0 - 2*y1 + y2)--raiz de y'(t) = 0
             end
         end
@@ -528,7 +615,8 @@ local function newmonotonizer(forward)
             Qy[#Qy + 1] = lerp2(y0,y1,y2,y3,t[i],t[i],t[i+1])
             Qy[#Qy + 1] = lerp2(y0,y1,y2,y3,t[i],t[i+1],t[i+1])
 
-            --já pode dar o foward do quadratic segment pra esses 2 junto com o anterior
+            --já pode dar o foward do quadratic segment pra 
+			--esses 2 junto com o anterior
             forward:quadratic_segment(Qx[#Qx - 2], Qy[#Qy - 2], Qx[#Qx - 1], Qy[#Qy - 1], Qx[#Qx], Qy[#Qy])
         end
    end
@@ -538,7 +626,8 @@ local function newmonotonizer(forward)
     end
     function monotonizer:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
         -- raciocínio análogo ao quadratic_segment
-        local t = { 0 } -- valores de t para os pontos que representam os segmentos monotônicos 
+        local t = { 0 } -- valores de t para os pontos que representam 
+						-- os segmentos monotônicos 
         local Qx = {} -- vetor da coordenada x dos novos pontos de controle
         local Qy = {} -- vetor da coordenada y dos novos pontos de controle
         local solution
@@ -580,7 +669,7 @@ local function newmonotonizer(forward)
             forward:cubic_segment(Qx[#Qx - 3], Qy[#Qy - 3], Qx[#Qx - 2], Qy[#Qy - 2], Qx[#Qx - 1], Qy[#Qy - 1], Qx[#Qx], Qy[#Qy])
         end
     end
-    function cleaner:end_closed_contour(len)
+    function monotonizer:end_closed_contour(len)
         forward:end_closed_contour(_)
     end
     monotonizer.end_open_contour = monotonizer.end_closed_contour
@@ -605,47 +694,110 @@ end
 
 -- prepare scene for sampling and return modified scene
 local function preparescene(scene)
-    local newscene = _M.scene()
-    --itera sobre a scena tranformando tudo em path
-    --itera sobre cada path, transpormando seus elementos em segmentos monotônicos, transformados e não-degenerados 
-    return newscene
-end
 
--- override circle creation function and return a path instead
-function _M.circle(cx, cy, r)
-    -- we start with a unit circle centered at the origin
-    -- it is formed by 3 arcs covering each third of the unit circle
-    local s = 0.5           -- sin(pi/6)
-    local c = 0.86602540378 -- cos(pi/6)
-    local w = s
-    return _M.path{
-        _M.M,  0,  1,
-        _M.R, -c,  s,  w, -c, -s,
-        _M.R,  0, -1,  w,  c, -s,
-        _M.R,  c,  s,  w,  0,  1,
-        _M.Z
-    -- transform it to the circle with given center and radius
-    }:scale(r, r):translate(cx, cy)
-end
-
--- override triangle creation and return a path instead
-function _M.triangle(x1, y1, x2, y2, x3, y3)
-	return _M.path{_M.M,x1,y1,_M.L,x2,y2,_M.L,x3,y3,_M.L,x1,y1,_M.Z}
-end
-
--- override polygon creation and return a path instead
-function _M.polygon(data)
-	local newpath = _M.path()
-	newpath:open()
-	newpath:begin_closed_contour(_,data[1],data[2])
-	local px,py = data[1],data[2]
-	for i = 3, #data, 2 do 
-		newpath:linear_segment(px,py,data[i],data[i+1])
-		px,py = data[i],data[i+1]
+	for k,e in ipairs(scene.elements) do
+		e.paint.xfs = scene.xf * e.paint.xf
 	end
-	newpath:linear_segment(px,py,data[1],data[2])
-	newpath:close()
-    return newpath
+
+	for i = 1,#scene.elements do
+		local e = scene.elements[i]
+
+		if e.paint['type'] == 'lineargradient' then
+			local p = e.paint
+
+			local tp1 = xform.translate(unpack(p.data.p1)):inverse()
+
+			p.data.tp2 = {tp1:apply(unpack(p.data.p2))}
+
+			local degree = deg(atan2(p.data.tp2[2],p.data.tp2[1]))
+			local rot = xform.rotate(-degree)
+
+			-- rotate p2 to be in the x-axis
+			p.data.tp2 = {rot:apply(unpack(p.data.p2))}
+
+			local scale = xform.scale(1/p.data.tp2[1],1)
+			p.data.tp2 = {scale:apply(unpack(p.data.p2))}
+
+			p.xfs = scale*rot*tp1*p.xfs:inverse()
+		end
+
+
+		if e.paint['type'] == 'radialgradient' then
+			local p = e.paint
+
+			local center = p.data.center
+			local r = p.data.radius
+
+			-- use implicity representation
+			local a,b,f,g = 1,1,-center[2],-center[1]
+			local c = center[1]*center[1] + center[2]*center[2] - r*r
+			p.circle = xform.xform(a,0,g, 0,b,f, g,f,c)
+
+			-- translate the focus to the origin
+			local tfocus = xform.translate(unpack(p.data.focus)):inverse()
+
+			-- translate the focus to the origin, center and the circle
+			p.data.tcenter = {tfocus:apply(unpack(p.data.center))}
+			p.circle = tfocus:inverse():transpose() * p.circle * tfocus:inverse() 
+
+			local degree = deg(atan2(p.data.tcenter[2],p.data.tcenter[1]))
+			local rot = xform.rotate(-degree)
+
+			p.data.tcenter = {rot:apply(unpack(p.data.tcenter))}
+			p.circle = rot:inverse():transpose() * p.circle * rot:inverse() 
+
+			local centerscale = 1/p.data.tcenter[1]
+			local tscale = xform.scale(centerscale)
+
+			p.data.tcenter = {tscale:apply(unpack(p.data.tcenter))}
+			p.circle = tscale:inverse():transpose() * p.circle * tscale:inverse() 
+			p.circleRadius = abs(p.circle[3+6]/p.circle[1] - 1)
+			p.xf = rot * tscale * tfocus * p.xfs:inverse()
+		end
+
+		if e.shape['type'] == 'path' then
+			e.shape = transformpath(e.shape,scene.xf)
+		end
+	end
+end
+
+local color = {}
+
+function color.solid(paint,p)
+	local r,g,b,a = unpack(paint.data)
+	return paint.opacity*r,paint.opacity*g, paint.opacity*b,paint.opacity*a
+end
+
+function color.lineargradient(paint,p)
+	local x,y,w = paint.xfs:apply(p[1],p[2])
+	local result  = abs(x) % 1
+	local r,g,b,a = ajusttoramp(paint.data.ramp,result)
+	return paint.opacity*r,paint.opacity*g, paint.opacity*b, paint.opacity*a
+end
+
+function color.radialgradient(paint,p)
+	local x,y,w = paint.xf:apply(p[1],p[2])
+	local a = x*x + y*y
+	local b = -2*x
+	local c = 1 - paint.circleRadius
+
+	local root = {quadratic.quadratic(a,b,c)}
+	local t = abs(root[3]/root[2]) % 1
+
+	local r,g,b,a = ajusttoramp(paint.data.ramp,t)
+	return paint.opacity*r,paint.opacity*g, paint.opacity*b,paint.opacity*a
+end
+
+
+local function composecolor(color,ncolor)
+	local r, g, b, a = unpack(color)
+	local nr, ng, nb, alpha = unpack(ncolor)
+
+	r = alpha*nr + (1-alpha)*r
+	g = alpha*ng + (1-alpha)*g
+	b = alpha*nb + (1-alpha)*b
+
+	return {r,g,b,a}
 end
 
 -- verifies that there is nothing unsupported in the scene
@@ -704,6 +856,8 @@ function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
     -- implement
     depth = depth or 1
 
+	if depth == maxdepth then return leaf end
+
     return leaf
 end
 
@@ -733,7 +887,6 @@ local function adjustviewport(vxmin, vymin, vxmax, vymax)
 end
 
 -- load your own svg driver here and use it for debugging!
-local svg = dofile"svg.lua"
 
 -- append lines marking the tree bounding box to the scene
 local function appendbox(xmin, ymin, xmax, ymax, scene)
@@ -744,6 +897,9 @@ end
 local function appendtree(quadtree, xmin, ymin, xmax, ymax, scene)
     -- implement
 end
+
+
+local svg = dofile"svg.lua"
 
 local function dumpscenetree(quadtree, xmin, ymin, xmax, ymax,
             scene, viewport, output)
