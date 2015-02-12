@@ -1,13 +1,19 @@
-local driver = require"driver"
-local image = require"image"
+local driver  = require"driver"
+local image   = require"image"
 local chronos = require"chronos"
 
-local sqrt = math.sqrt
-local min = math.min
-local max = math.max
+local element   = require"element"
+local xform     = require"xform"
+local sc        = require"scene"
+local quadratic = require"quadratic"
+local cubic     = require"cubic"
+
+local sqrt   = math.sqrt
+local min    = math.min
+local max    = math.max
 local unpack = table.unpack
-local floor = math.floor
-local abs = math.abs
+local floor  = math.floor
+local abs    = math.abs
 
 -- output formatted string to stderr
 local function stderr(...)
@@ -127,6 +133,17 @@ local function ajusttoramp(ramp,x)
 end
 -- ending gradient functions
 
+local function linear_coefficients(x0,x1)
+	return x1 - x0,x0
+end
+
+local function quadratic_coefficients(x0,x1,x2)
+	return (x0 - 2*x1 + x2), 2*(x1-x0), x0
+end
+
+local function cubic_coefficients(x0,x1,x2,x3)
+	return (x3+3*x1-3*x2-x0), 3*(x0-2*x1+x2), 3*(x1-x0), x0
+end
 
 -- cut canonic rational quadratic segment and recanonize
 local function cutr2s(a, b, x0, y0, x1, y1, w1, x2, y2)
@@ -342,22 +359,28 @@ local function newmonotonizer(forward)
     end
     monotonizer.begin_open_contour = monotonizer.begin_closed_contour
     function monotonizer:linear_segment(x0, y0, x1, y1)
-        forward:linear_segment(px, py, x1, y1) -- o segmento linear não precisa ser monotonizado
+        forward:linear_segment(px, py, x1, y1) 
+		-- o segmento linear não precisa ser monotonizado
     end
     function monotonizer:quadratic_segment(x0, y0, x1, y1, x2, y2)
-        --descobre as raízes de x'(t) e y'(t) ordena os t's e usa lerp2 pra descobrir os pontos de controle          
-        local t = { 0 } -- valores de t para os pontos que representam os segmentos monotônicos 
+        --descobre as raízes de x'(t) e y'(t) ordena os t's e
+		--usa lerp2 pra descobrir os pontos de controle          
+        local t = { 0 }  
     
         if ( x0 + x2 ~= 2*x1 ) then
-            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
-            if ( (x0 - x1)/(x0 - 2*x1 + x2) < 1 and (x0 - x1)/(x0 - 2*x1 + x2) > 0 ) then 
+            -- caso a raiz não caia no intervalo [0,1],
+			-- o resultado não nos interessa
+            if ( (x0 - x1)/(x0 - 2*x1 + x2) < 1 
+				and (x0 - x1)/(x0 - 2*x1 + x2) > 0 ) then 
                 t[#t + 1] =  (x0 - x1)/(x0 - 2*x1 + x2)--raiz de x'(t) = 0
             end
             
         end
         if ( y0 + y2 ~= 2*y1 ) then
-            -- caso a raiz não caia no intervalo [0,1], o resultado não nos interessa
-            if ( (y0 - y1)/(y0 - 2*y1 + y2) < 1 and (y0 - y1)/(y0 - 2*y1 + y2) > 0 ) then 
+            -- caso a raiz não caia no intervalo [0,1],
+			-- o resultado não nos interessa
+            if ( (y0 - y1)/(y0 - 2*y1 + y2) < 1 
+				and (y0 - y1)/(y0 - 2*y1 + y2) > 0 ) then 
                 t[#t + 1] =  (y0 - y1)/(y0 - 2*y1 + y2)--raiz de y'(t) = 0
             end
         end
@@ -375,7 +398,8 @@ local function newmonotonizer(forward)
             local px2 = lerp2(x0,x1,x2,t[i+1],t[i+1])
             local py2 = lerp2(y0,y1,y2,t[i+1],t[i+1])
 
-            --já pode dar o foward do quadratic segment pra esses 2 junto com o anterior
+            --já pode dar o foward do quadratic segment pra 
+			--esses 2 junto com o anterior
             forward:quadratic_segment(px0,py0,px1,py1,px2,py2)
         end
    end
@@ -413,21 +437,20 @@ local function newmonotonizer(forward)
 
 		table.sort(r,quicksort)
 		for i = 1, #r - 1 do
-			 forward:rational_quadratic_segment(cutr2s(r[i],r[i+1],x0,y0,x1,y1,w1,x2,y2))
+			 forward:rational_quadratic_segment(
+				 cutr2s(r[i],r[i+1],x0,y0,x1,y1,w1,x2,y2)
+				 )
 		 end
-
-
-	--	forward:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
     end
     function monotonizer:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
 
         -- raciocínio análogo ao quadratic_segment
-        local t = { 0 } -- valores de t para os pontos que representam os segmentos monotônicos 
+        local t = { 0 }  
         local Qx = {} -- vetor da coordenada x dos novos pontos de controle
         local Qy = {} -- vetor da coordenada y dos novos pontos de controle
-        local solution
-        local t1, s1 , t2 , s2
-         solution , t1 , s1 , t2 , s2 = quadratic.quadratic( x3 - 3*x2 + 3*x1 - x0 , 2*x2 - 4*x1 + 2*x0 , x1 - x0 )
+        local solution,t1,s1 , t2 , s2
+         solution , t1 , s1 , t2 , s2 = quadratic.quadratic( 
+		 	x3 - 3*x2 + 3*x1 - x0 , 2*x2 - 4*x1 + 2*x0 , x1 - x0 )
          if ( solution == 2 ) then
             if ( t1/s1 > 0 and t1/s1 < 1 )  then
                 t[#t + 1] = t1/s1
@@ -437,7 +460,8 @@ local function newmonotonizer(forward)
             end 
          end
 
-         solution , t1 , s1 , t2 , s2 = quadratic.quadratic( y3 - 3*y2 + 3*y1 - y0 , 2*y2 - 4*y1 + 2*y0 , y1 - y0 )
+         solution , t1 , s1 , t2 , s2 = quadratic.quadratic( 
+		 	y3 - 3*y2 + 3*y1 - y0 , 2*y2 - 4*y1 + 2*y0 , y1 - y0 )
          if ( solution == 2) then
             if ( t1/s1 > 0 and t1/s1 < 1 )  then
                 t[#t + 1] = t1/s1
@@ -460,7 +484,8 @@ local function newmonotonizer(forward)
             Qy[#Qy + 1] = lerp3(y0,y1,y2,y3,t[i],t[i+1],t[i+1])
             Qy[#Qy + 1] = lerp3(y0,y1,y2,y3,t[i+1],t[i+1],t[i+1])
 
-            --já pode dar o foward do cubic segment pra esses 3 junto com o anterior
+            --já pode dar o foward do cubic segment pra esses 
+			--3 junto com o anterior
             forward:cubic_segment(Qx[#Qx - 3], Qy[#Qy - 3], Qx[#Qx - 2], Qy[#Qy - 2], Qx[#Qx - 1], Qy[#Qy - 1], Qx[#Qx], Qy[#Qy])
         end
     end
@@ -604,7 +629,7 @@ local function clip(c,o,value,forward)
 				fx, fy = px0,py0
 				forward:begin_closed_contour(_,fx,fy)
 			else
-			forward:linear_segment(px,py,px0,py0)
+				forward:linear_segment(px,py,px0,py0)
 			end
 			forward:linear_segment(px0,py0,x1,y1)
 			px,py = x1,y1
@@ -668,14 +693,16 @@ local function clip(c,o,value,forward)
 	end
 
 	function iterator:rational_quadratic_segment(x0,y0,x1,y1,w1,x2,y2)
-		if o.get(c.get({x0,y0}),c.get(value)) and o.get(c.get({x2,y2}),c.get(value)) then
+		if o.get(c.get({x0,y0}),c.get(value)) 
+			and o.get(c.get({x2,y2}),c.get(value)) then
 			if fx == nil then
 				fx, fy = x0,y0
 				forward:begin_closed_contour(_,fx,fy)
 			end
 			forward:rational_quadratic_segment(x0,y0,x1,y1,w1,x2,y2)
 			px,py = x2,y2
-		elseif not o.get(c.get({x0,y0}),c.get(value)) and o.get(c.get({x2,y2}),c.get(value)) then
+		elseif not o.get(c.get({x0,y0}),c.get(value)) 
+			and o.get(c.get({x2,y2}),c.get(value)) then
 			local t = rational_quadratic_intersection(c.get({x0,y0}),c.get({x1,y1}),w1,c.get({x2,y2}),c.get(value)) 
 			local px0,py0,px1,py1,pw1,px2,py2 = cutr2s(t,1,x0,y0,x1,y1,w1,x2,y2)
 			if fx == nil then
@@ -686,7 +713,8 @@ local function clip(c,o,value,forward)
 			end
 			forward:rational_quadratic_segment(px0,py0,px1,py1,pw1,x2,y2)
 			px,py = x2,y2
-		elseif o.get(c.get({x0,y0}),c.get(value))  and not o.get(c.get({x2,y2}),c.get(value)) then
+		elseif o.get(c.get({x0,y0}),c.get(value))  
+			and not o.get(c.get({x2,y2}),c.get(value)) then
 			local t = rational_quadratic_intersection(c.get({x0,y0}),c.get({x1,y1}),w1,c.get({x2,y2}),c.get(value)) 
 			if fx == nil then
 				fx, fy = x0,y0
@@ -779,71 +807,52 @@ end
 
 -- prepare scene for sampling and return modified scene
 local function preparescene(scene)
-
 	for k,e in ipairs(scene.elements) do
 		e.paint.xfs = scene.xf * e.paint.xf
 	end
-
 	for i = 1,#scene.elements do
 		local e = scene.elements[i]
-
 		if e.paint['type'] == 'lineargradient' then
 			local p = e.paint
-
 			local tp1 = xform.translate(unpack(p.data.p1)):inverse()
-
 			p.data.tp2 = {tp1:apply(unpack(p.data.p2))}
-
 			local degree = deg(atan2(p.data.tp2[2],p.data.tp2[1]))
 			local rot = xform.rotate(-degree)
-
 			-- rotate p2 to be in the x-axis
 			p.data.tp2 = {rot:apply(unpack(p.data.p2))}
-
 			local scale = xform.scale(1/p.data.tp2[1],1)
 			p.data.tp2 = {scale:apply(unpack(p.data.p2))}
-
 			p.xfs = scale*rot*tp1*p.xfs:inverse()
 		end
-
-
 		if e.paint['type'] == 'radialgradient' then
 			local p = e.paint
-
 			local center = p.data.center
 			local r = p.data.radius
-
 			-- use implicity representation
 			local a,b,f,g = 1,1,-center[2],-center[1]
 			local c = center[1]*center[1] + center[2]*center[2] - r*r
 			p.circle = xform.xform(a,0,g, 0,b,f, g,f,c)
-
 			-- translate the focus to the origin
 			local tfocus = xform.translate(unpack(p.data.focus)):inverse()
-
 			-- translate the focus to the origin, center and the circle
 			p.data.tcenter = {tfocus:apply(unpack(p.data.center))}
 			p.circle = tfocus:inverse():transpose() * p.circle * tfocus:inverse() 
-
 			local degree = deg(atan2(p.data.tcenter[2],p.data.tcenter[1]))
 			local rot = xform.rotate(-degree)
-
 			p.data.tcenter = {rot:apply(unpack(p.data.tcenter))}
 			p.circle = rot:inverse():transpose() * p.circle * rot:inverse() 
-
 			local centerscale = 1/p.data.tcenter[1]
 			local tscale = xform.scale(centerscale)
-
 			p.data.tcenter = {tscale:apply(unpack(p.data.tcenter))}
 			p.circle = tscale:inverse():transpose() * p.circle * tscale:inverse() 
 			p.circleRadius = abs(p.circle[3+6]/p.circle[1] - 1)
 			p.xf = rot * tscale * tfocus * p.xfs:inverse()
 		end
-
 		if e.shape['type'] == 'path' then
 			e.shape = transformpath(e.shape,scene.xf)
 		end
 	end
+	return scene
 end
 
 local color = {}
@@ -865,10 +874,8 @@ function color.radialgradient(paint,p)
 	local a = x*x + y*y
 	local b = -2*x
 	local c = 1 - paint.circleRadius
-
 	local root = {quadratic.quadratic(a,b,c)}
 	local t = abs(root[3]/root[2]) % 1
-
 	local r,g,b,a = ajusttoramp(paint.data.ramp,t)
 	return paint.opacity*r,paint.opacity*g, paint.opacity*b,paint.opacity*a
 end
@@ -904,7 +911,7 @@ end
 -- to evaluate the color, and finally return r,g,b,a
 local function sample(quadtree, xmin, ymin, xmax, ymax, x, y)
     -- implement
-    return 0, 0, 0, 1
+    return 1, 1, 1, 1
 end
 
 -- this returns an iterator that prints the methods called
@@ -930,22 +937,6 @@ local function newtap(name, forward)
     })
 end
 
--- clip scene against bounding-box and return a quadtree leaf
-local function scenetoleaf(scene, xmin, ymin, xmax, ymax)
-    -- implement
-    return scene
-end
-
--- recursively subdivides leaf to create the quadtree
-function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
-    -- implement
-    depth = depth or 1
-
-	if depth == maxdepth then return leaf end
-
-    return leaf
-end
-
 -- return smallest power of 2 larger than n
 local function power2(n)
     n = floor(n)
@@ -964,7 +955,7 @@ local function power2(n)
 end
 
 -- adjust the viewport so that the width and the height are
--- the smallest powers of 2 that are large enough to
+-- the smallest powrs of 2 that are large enough to
 -- contain the viewport
 local function adjustviewport(vxmin, vymin, vxmax, vymax)
     local width = max(power2(vxmax - vxmin), power2(vymax - vymin))
@@ -983,15 +974,159 @@ local function appendtree(quadtree, xmin, ymin, xmax, ymax, scene)
     -- implement
 end
 
+-- clip scene against bounding-box and return a quadtree leaf
+local function scenetoleaf(scene, xmin, ymin, xmax, ymax)
+	local leaf = {}
+	leaf.scene = scene
+	leaf.xmin = xmin
+	leaf.xmax = xmax
+	leaf.ymin = xmin
+	leaf.ymax = ymax
+
+    return leaf
+end
+
+local function clipbox(xmin,ymin,xmax,ymax,oldpath)
+	local shape = clippath(cx,bt,{xmin,ymin},oldpath)
+	shape = clippath(cy,bt,{xmin,ymin},shape)
+	shape = clippath(cx,lt,{xmax,ymax},shape)
+	shape = clippath(cy,lt,{xmax,ymax},shape)
+	return shape
+end
+
+
+local function clipscene(xmin,ymin,xmax,ymax,scene)
+	xmin = xmin - 0.1
+	xmax = xmax + 0.1
+	ymin = ymin - 0.1
+	ymax = ymax + 0.1
+	local newelements = { }
+	local shape 
+	for i,e in pairs(scene.elements) do 
+--		shape = clipbox(xm,ymin,xmax,ym,e.shape)
+		shape = clipbox(xmin,ymin,xmax,ymax,e.shape)
+		if shape.data[1] ~= 0 then 
+			newelements[#newelements + 1] = element.fill(shape,e.paint)
+		end
+	end
+	return sc.scene(newelements)
+end
+
+local function segmentnumber(scene)
+	local sum = 0 
+	for i,e in pairs(scene.elements) do 
+		sum = sum + e.shape.data[1]
+	end
+	return sum
+end
+count = 1
 
 local svg = dofile"svg.lua"
+local scenetree = dofile"scenetree.lua"
+
+local folder = "output/"
+
+-- recursively subdivides leaf to create the quadtree
+function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
+    depth = depth or 1
+	if depth == maxdepth then return leaf end
+	if segmentnumber(leaf.scene) < 11 then return leaf end
+
+
+	local xm = (xmax+xmin)/2
+	local ym = (ymax+ymin)/2
+
+	local filename = "/a.svg"
+
+	if depth == 1 then
+		leaf.scene.xf = xform.identity()
+		local outsvg = assert(io.open("output/a.svg", "wb"))
+		svg.render(leaf.scene,{xmin,ymin,xmax,ymax}, outsvg)
+		outsvg:close()
+		scenetree.open({xmin,ymin,xmax,ymax})
+	end
+	
+--[[	if not quadtree.children then
+		scenetree.render(quadtree.scene,{ xmin,ymin,xmax,ymax})
+	else
+		for i,e in pairs(quadtree.children) do
+			dumpscenetree(e,e.xmin,e.ymin,e.xmax,e.ymax,scene,viewport,output)
+		end
+	end--]]
+
+
+	local lefttop     = clipscene(xmin,ym,xm,ymax,leaf.scene)
+	scenetree.render(lefttop,{ xmin,ym,xm,ymax})
+--[[	local outsvg = assert(io.open(string.gsub(folder..depth..filename,".svg","-"..depth..count.."lt.svg"), "wb"))
+    svg.render(lefttop,{xmin,-ym,xm-xmin,ymax-ym}, outsvg)
+	outsvg:close() --]]
+
+
+	local righttop    = clipscene(xm,ym,xmax,ymax,leaf.scene)
+	scenetree.render(righttop,{ xm,ym,xmax,ymax})
+--[[	local outsvg = assert(io.open(string.gsub(folder..depth..filename,".svg","-"..depth..count.."rt.svg"), "wb"))
+    svg.render(righttop,{xm,-ym,xmax-ym,ymax-ym}, outsvg)
+	outsvg:close()--]]
+
+	local leftbottom  = clipscene(xmin,ymin,xm,ym,leaf.scene)
+	scenetree.render(leftbottom,{ xmin,ymin,xm,ym})
+--[[	local outsvg = assert(io.open(string.gsub(folder..depth..filename,".svg","-"..depth..count.."lb.svg"), "wb"))
+    svg.render(leftbottom,{xmin,ymin,xm-xmin,ym-ymin}, outsvg)
+	outsvg:close() --]]
+
+	local rightbottom = clipscene(xm,ymin,xmax,ym,leaf.scene)
+	scenetree.render(rightbottom,{ xm,ymin,xmax,ym})
+--[[	local outsvg = assert(io.open(string.gsub(folder..depth..filename,".svg","-"..depth..count.."rb.svg"), "wb"))
+	svg.render(rightbottom,{xm,ymin,xmax-xm,ym-ymin}, outsvg)
+	outsvg:close() --]]
+
+--	count = count + 1
+	leaf.depth = depth
+	leaf.children = {
+		subdividescene(scenetoleaf(lefttop,xmin,ym,xm,ymax),xmin,ym,xm,ymax,
+				maxdepth,depth+1),
+		subdividescene(scenetoleaf(righttop,xm,ym,xmax,ymax),xm,ym,xmax,ymax,
+				maxdepth,depth+1),
+		subdividescene(scenetoleaf(leftbottom,xmin,ymin,xm,ym),xmin,ymin,xm,ym,
+				maxdepth,depth+1),
+		subdividescene(scenetoleaf(rightbottom,xm,ymin,xmax,ym),xm,ymin,xmax,ym,
+				maxdepth,depth+1),
+	}
+	if depth == 1 then
+		local outsvg = assert(io.open("scenetree_1.svg", "wb"))
+		scenetree.close(outsvg)
+		outsvg:close()
+	end
+
+    return leaf
+end
+
+
 
 local function dumpscenetree(quadtree, xmin, ymin, xmax, ymax,
             scene, viewport, output)
     appendbox(xmin, ymin, xmax, ymax, scene)
     appendtree(quadtree, xmin, ymin, xmax, ymax, scene)
     -- use your svg driver to dump contents to an SVG file
-    svg.render(scene, viewport, output)
+	
+--[[	if quadtree.depth == 1 then 
+		scenetree.open({xmin,ymin,xmax,ymax})
+	end
+	
+	if not quadtree.children then
+		scenetree.render(quadtree.scene,{ xmin,ymin,xmax,ymax})
+	else
+		for i,e in pairs(quadtree.children) do
+			dumpscenetree(e,e.xmin,e.ymin,e.xmax,e.ymax,scene,viewport,output)
+		end
+	end
+
+	if quadtree.depth == 1 then
+		local outsvg = assert(io.open("scenetree.svg", "wb"))
+		scenetree.close(outsvg)
+		outsvg:close()
+	end --]]
+
 end
 
 function _M.render(scene, viewport, output, arguments)
@@ -1046,6 +1181,7 @@ function _M.render(scene, viewport, output, arguments)
     local quadtree = subdividescene(
         scenetoleaf(scene, vxmin, vymin, vxmax, vymax),
         qxmin, qymin, qxmax, qymax, maxdepth)
+
     stderr("preprocess in %.3fs\n", time:elapsed())
     time:reset()
     if scenetree then
