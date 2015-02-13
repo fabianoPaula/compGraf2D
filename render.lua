@@ -23,7 +23,8 @@ end
 local FLT_MIN = 1.17549435E-38 -- smallest-magnitude normalized single-precision
 local TOL = 0.01 -- root-finding tolerance, in pixels
 local MAX_ITER = 30 -- maximum number of bisection iterations in root-finding
-local MAX_DEPTH = 3 -- maximum quadtree depth
+local MAX_DEPTH = 8 -- maximum quadtree depth
+local MIN_SEGMENTS = 11 -- minimun of segments in every leaf
 
 local _M = driver.new()
 
@@ -981,7 +982,7 @@ local function scenetoleaf(scene, xmin, ymin, xmax, ymax)
 	leaf.scene = scene
 	leaf.xmin = xmin
 	leaf.xmax = xmax
-	leaf.ymin = xmin
+	leaf.ymin = ymin
 	leaf.ymax = ymax
 
     return leaf
@@ -1022,92 +1023,60 @@ local function segmentnumber(scene)
 end
 count = 1
 
-local svg = dofile"svg.lua"
-local scenetree = dofile"scenetree.lua"
-
-local folder = "output/"
 
 -- recursively subdivides leaf to create the quadtree
 function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
     depth = depth or 1
 	leaf.depth = depth
-
 	if depth == maxdepth then return leaf end
-	if segmentnumber(leaf.scene) < 11 then return leaf end
+	if segmentnumber(leaf.scene) < MIN_SEGMENTS then return leaf end
 
 	local xm = (xmax+xmin)/2
 	local ym = (ymax+ymin)/2
 
-	local filename = "/a.svg"
-
-	if depth == 1 then
-		leaf.scene.xf = xform.identity()
-		local outsvg = assert(io.open("output/a.svg", "wb"))
-		svg.render(leaf.scene,{xmin,ymin,xmax,ymax}, outsvg)
-		outsvg:close()
-		scenetree.open({xmin,ymin,xmax,ymax})
-	end
 	
 	local lefttop     = clipscene(xmin,ym,xm,ymax,leaf.scene)
-	scenetree.render(lefttop,{ xmin,ym,xm,ymax})
 	local righttop    = clipscene(xm,ym,xmax,ymax,leaf.scene)
-	scenetree.render(righttop,{ xm,ym,xmax,ymax})
 	local leftbottom  = clipscene(xmin,ymin,xm,ym,leaf.scene)
-	scenetree.render(leftbottom,{ xmin,ymin,xm,ym})
 	local rightbottom = clipscene(xm,ymin,xmax,ym,leaf.scene)
-	scenetree.render(rightbottom,{ xm,ymin,xmax,ym})
 
 	leaf.children = {
-		subdividescene(scenetoleaf(lefttop,xmin,ym,xm,ymax),xmin,ym,xm,ymax,
-				maxdepth,depth+1),
-		subdividescene(scenetoleaf(righttop,xm,ym,xmax,ymax),xm,ym,xmax,ymax,
-				maxdepth,depth+1),
-		subdividescene(scenetoleaf(leftbottom,xmin,ymin,xm,ym),xmin,ymin,xm,ym,
-				maxdepth,depth+1),
-		subdividescene(scenetoleaf(rightbottom,xm,ymin,xmax,ym),xm,ymin,xmax,ym,
-				maxdepth,depth+1),
+		subdividescene(scenetoleaf(lefttop,xmin,ym,xm,ymax),
+			xmin,ym,xm,ymax,maxdepth,depth+1),
+		subdividescene(scenetoleaf(righttop,xm,ym,xmax,ymax),
+			xm,ym,xmax,ymax,maxdepth,depth+1),
+		subdividescene(scenetoleaf(leftbottom,xmin,ymin,xm,ym),
+			xmin,ymin,xm,ym,maxdepth,depth+1),
+		subdividescene(scenetoleaf(rightbottom,xm,ymin,xmax,ym),
+			xm,ymin,xmax,ym,maxdepth,depth+1),
 	}
 	leaf.scene = nil
-	if depth == 1 then
-		local outsvg = assert(io.open("scenetree_1.svg", "wb"))
-		scenetree.close(outsvg)
-		outsvg:close()
-	end
     return leaf
 end
 
-count = 0
+local svg = dofile"scenetree.lua"
+
 local function dumpscenetree(quadtree, xmin, ymin, xmax, ymax,
             scene, viewport, output)
-    appendbox(xmin, ymin, xmax, ymax, scene)
-    appendtree(quadtree, xmin, ymin, xmax, ymax, scene)
+	-- appendbox(xmin, ymin, xmax, ymax, scene)
+	-- appendtree(quadtree, xmin, ymin, xmax, ymax, scene)
     -- use your svg driver to dump contents to an SVG file
 	
-	if quadtree.depth == 1 then 
-		scenetree.open({xmin,ymin,xmax,ymax})
-	end
-	
-	if quadtree.depth == MAX_DEPTH then
-		count = count + 1
-		print(quadtree.depth,count)
-		if #quadtree.scene.elements > 0 then
-			scenetree.render(quadtree.scene,{xmin,ymin,xmax,ymax})
-		end
+	if quadtree.depth == 1 then svg.open({xmin,ymin,xmax,ymax}) end
+	if quadtree.children == nil then
+		svg.render(quadtree.scene,{xmin,ymin,xmax,ymax})
 	else
-		scenetree.render(quadtree.scene,{xmin,ymin,xmax,ymax})
 		if quadtree.children ~= nil then
 			for i,e in pairs(quadtree.children) do
 				dumpscenetree(e,e.xmin,e.ymin,e.xmax,e.ymax,scene,viewport,output)
 			end
 		end
 	end
-
 	if quadtree.depth == 1 then
 		local outsvg = assert(io.open("scenetree.svg", "wb"))
-		scenetree.close(outsvg)
+		svg.close(outsvg)
 		outsvg:close()
 	end 
-
 end
 
 function _M.render(scene, viewport, output, arguments)
