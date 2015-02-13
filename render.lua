@@ -23,7 +23,7 @@ end
 local FLT_MIN = 1.17549435E-38 -- smallest-magnitude normalized single-precision
 local TOL = 0.01 -- root-finding tolerance, in pixels
 local MAX_ITER = 30 -- maximum number of bisection iterations in root-finding
-local MAX_DEPTH = 8 -- maximum quadtree depth
+local MAX_DEPTH = 3 -- maximum quadtree depth
 
 local _M = driver.new()
 
@@ -61,6 +61,7 @@ function _M.polygon(data)
 		px,py = data[i],data[i+1]
 	end
 	newpath:linear_segment(px,py,data[1],data[2])
+	newpath:end_closed_contour(_)
 	newpath:close()
     return newpath
 end
@@ -280,7 +281,7 @@ local function newxformer(xf, forward)
         if px ~= fx or py ~= fy then
             forward:linear_segment(px, py, fx, fy)
         end
-        forward:end_closed_contour(_)
+        forward:end_closed_contour(len)
     end
     xformer.end_open_contour = xformer.end_closed_contour
     function xformer:linear_segment(x0, y0, x1, y1)
@@ -1029,9 +1030,10 @@ local folder = "output/"
 -- recursively subdivides leaf to create the quadtree
 function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
     depth = depth or 1
+	leaf.depth = depth
+
 	if depth == maxdepth then return leaf end
 	if segmentnumber(leaf.scene) < 11 then return leaf end
-
 
 	local xm = (xmax+xmin)/2
 	local ym = (ymax+ymin)/2
@@ -1046,42 +1048,15 @@ function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
 		scenetree.open({xmin,ymin,xmax,ymax})
 	end
 	
---[[	if not quadtree.children then
-		scenetree.render(quadtree.scene,{ xmin,ymin,xmax,ymax})
-	else
-		for i,e in pairs(quadtree.children) do
-			dumpscenetree(e,e.xmin,e.ymin,e.xmax,e.ymax,scene,viewport,output)
-		end
-	end--]]
-
-
 	local lefttop     = clipscene(xmin,ym,xm,ymax,leaf.scene)
 	scenetree.render(lefttop,{ xmin,ym,xm,ymax})
---[[	local outsvg = assert(io.open(string.gsub(folder..depth..filename,".svg","-"..depth..count.."lt.svg"), "wb"))
-    svg.render(lefttop,{xmin,-ym,xm-xmin,ymax-ym}, outsvg)
-	outsvg:close() --]]
-
-
 	local righttop    = clipscene(xm,ym,xmax,ymax,leaf.scene)
 	scenetree.render(righttop,{ xm,ym,xmax,ymax})
---[[	local outsvg = assert(io.open(string.gsub(folder..depth..filename,".svg","-"..depth..count.."rt.svg"), "wb"))
-    svg.render(righttop,{xm,-ym,xmax-ym,ymax-ym}, outsvg)
-	outsvg:close()--]]
-
 	local leftbottom  = clipscene(xmin,ymin,xm,ym,leaf.scene)
 	scenetree.render(leftbottom,{ xmin,ymin,xm,ym})
---[[	local outsvg = assert(io.open(string.gsub(folder..depth..filename,".svg","-"..depth..count.."lb.svg"), "wb"))
-    svg.render(leftbottom,{xmin,ymin,xm-xmin,ym-ymin}, outsvg)
-	outsvg:close() --]]
-
 	local rightbottom = clipscene(xm,ymin,xmax,ym,leaf.scene)
 	scenetree.render(rightbottom,{ xm,ymin,xmax,ym})
---[[	local outsvg = assert(io.open(string.gsub(folder..depth..filename,".svg","-"..depth..count.."rb.svg"), "wb"))
-	svg.render(rightbottom,{xm,ymin,xmax-xm,ym-ymin}, outsvg)
-	outsvg:close() --]]
 
---	count = count + 1
-	leaf.depth = depth
 	leaf.children = {
 		subdividescene(scenetoleaf(lefttop,xmin,ym,xm,ymax),xmin,ym,xm,ymax,
 				maxdepth,depth+1),
@@ -1092,32 +1067,38 @@ function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
 		subdividescene(scenetoleaf(rightbottom,xm,ymin,xmax,ym),xm,ymin,xmax,ym,
 				maxdepth,depth+1),
 	}
+	leaf.scene = nil
 	if depth == 1 then
 		local outsvg = assert(io.open("scenetree_1.svg", "wb"))
 		scenetree.close(outsvg)
 		outsvg:close()
 	end
-
     return leaf
 end
 
-
-
+count = 0
 local function dumpscenetree(quadtree, xmin, ymin, xmax, ymax,
             scene, viewport, output)
     appendbox(xmin, ymin, xmax, ymax, scene)
     appendtree(quadtree, xmin, ymin, xmax, ymax, scene)
     -- use your svg driver to dump contents to an SVG file
 	
---[[	if quadtree.depth == 1 then 
+	if quadtree.depth == 1 then 
 		scenetree.open({xmin,ymin,xmax,ymax})
 	end
 	
-	if not quadtree.children then
-		scenetree.render(quadtree.scene,{ xmin,ymin,xmax,ymax})
+	if quadtree.depth == MAX_DEPTH then
+		count = count + 1
+		print(quadtree.depth,count)
+		if #quadtree.scene.elements > 0 then
+			scenetree.render(quadtree.scene,{xmin,ymin,xmax,ymax})
+		end
 	else
-		for i,e in pairs(quadtree.children) do
-			dumpscenetree(e,e.xmin,e.ymin,e.xmax,e.ymax,scene,viewport,output)
+		scenetree.render(quadtree.scene,{xmin,ymin,xmax,ymax})
+		if quadtree.children ~= nil then
+			for i,e in pairs(quadtree.children) do
+				dumpscenetree(e,e.xmin,e.ymin,e.xmax,e.ymax,scene,viewport,output)
+			end
 		end
 	end
 
@@ -1125,7 +1106,7 @@ local function dumpscenetree(quadtree, xmin, ymin, xmax, ymax,
 		local outsvg = assert(io.open("scenetree.svg", "wb"))
 		scenetree.close(outsvg)
 		outsvg:close()
-	end --]]
+	end 
 
 end
 
