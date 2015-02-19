@@ -14,6 +14,9 @@ local max    = math.max
 local unpack = table.unpack
 local floor  = math.floor
 local abs    = math.abs
+local deg   = math.deg
+local atan2  = math.atan2
+local inf   = math.huge
 
 -- output formatted string to stderr
 local function stderr(...)
@@ -119,7 +122,7 @@ end
 local function ajusttoramp(ramp,x)
 	local lambda, xmin, xmax,index = 0,0,0,0
 	for i = 1,#ramp-2,2 do
-		if (ramp[i] <= x) and (x <= ramp[i+1]) then
+		if (ramp[i] <= x) and (x <= ramp[i+2]) then
 			xmin, xmax = ramp[i], ramp[i+2]
 			index = i
 		end
@@ -857,21 +860,21 @@ local function preparescene(scene)
 	return scene
 end
 
-local color = {}
+local colour = {}
 
-function color.solid(paint,p)
+function colour.solid(paint,p)
 	local r,g,b,a = unpack(paint.data)
 	return paint.opacity*r,paint.opacity*g, paint.opacity*b,paint.opacity*a
 end
 
-function color.lineargradient(paint,p)
+function colour.lineargradient(paint,p)
 	local x,y,w = paint.xfs:apply(p[1],p[2])
 	local result  = abs(x) % 1
 	local r,g,b,a = ajusttoramp(paint.data.ramp,result)
 	return paint.opacity*r,paint.opacity*g, paint.opacity*b, paint.opacity*a
 end
 
-function color.radialgradient(paint,p)
+function colour.radialgradient(paint,p)
 	local x,y,w = paint.xf:apply(p[1],p[2])
 	local a = x*x + y*y
 	local b = -2*x
@@ -909,11 +912,138 @@ local function checkscene(scene)
     end
 end
 
+local function insidenode(e,x,y)
+	return (e.xmin <= x)and(e.xmax >= x)and(e.ymax >= y)and(e.ymin <= y)
+end
+
+local function nextnode(quadtree,x,y)
+	if quadtree.children then
+		for i,e in pairs(quadtree.children) do
+			if insidenode(e,x,y) then
+				return e
+			end
+		end
+	end
+	return nil
+end
+
+local function bb(xmin,ymin,xmax,ymax,p)
+	return (xmax > p[1]) and (ymax > p[2]) and (ymin <= p[2])
+end
+
+
+local function path(path, p)
+	local winding = 0
+    local iterator = {}
+	function iterator:begin_open_contour(len, x0, y0)
+    end
+    function iterator:begin_closed_contour(len, x0, y0)
+    end
+    function iterator:linear_segment(x0, y0, x1, y1)
+--		if not bb(min(x0,x1),min(y0,y1),max(x0,x1),max(y0,y1),p) then return end
+		local a,b = linear_coefficients(y0,y1)
+		if a ~= 0 then
+			local t  = (-b+p[2]) /a
+			if t >= 0 and t < 1 then
+				if p[1] < lerp(x0,x1,t)then
+					winding = winding + sign(y1-y0)
+				end
+			end
+		end
+    end
+    function iterator:quadratic_segment(x0, y0, x1, y1, x2, y2)
+		local a,b,c = quadratic_coefficients(y0,y1,y2)
+		local root = {quadratic.quadratic(a,b,c - p[2])}
+		if root[1] == 2 then
+			for i = 2,4,2 do
+				local t = root[i]/root[i+1]
+				if t >= 0 and t < 1 then
+					if p[1] < lerp2(x0,x1,x2,t,t)then
+						winding = winding + sign(2*a*t + b)
+					end
+				end
+			end
+		end
+	end
+    function iterator:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
+		local a,b,c = quadratic_coefficients(y0,y1,y2)
+		local d,e,f = quadratic_coefficients(1,w1,1) 
+		local  ca, cb, cc = a - p[2]*d, b - p[2]*e, c - p[2]*f
+		local  dca, dcb, dcc = (a*e - b*d), 2*(a*f-c*d), b*f - c*e
+
+
+		local root = {quadratic.quadratic(ca,cb,cc) }
+		if root[1] == 2 then
+			for i = 2,4,2 do
+				local t = root[i]/root[i+1]
+				if t >= 0 and t < 1 then
+					if lerp2(1,w1,1,t,t)*p[1] < lerp2(x0,x1,x2,t,t) then
+						--winding = winding + sign(dca*t*t + dcb*t + dcc )
+						winding = winding + sign(y2- y0)
+					end
+				end
+			end
+		end
+    end
+    function iterator:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
+		local a,b,c,d = cubic_coefficients(y0,y1,y2,y3)
+		local root = {cubic.cubic(a,b,c,d -  p[2])}
+		for i = 2,#root-1,2 do
+			local t = root[i]/root[i+1]
+			if t >= 0 and t < 1 then
+				if p[1] < lerp3(x0,x1,x2,x3,t,t,t)then
+					winding = winding + sign(3*a*t^2 + 2*b*t + c)
+				end
+			end
+		end
+    end
+    function iterator:end_open_contour(len)
+  	end
+    function iterator:end_closed_contour(len)
+    end
+   	path:iterate(iterator)
+	return winding 
+end
+
+local function shapecallback(element,p)
+	local result = path(element.shape,p)
+	if element.type == 'fill' then
+		return (result ~=0)
+	elseif element.type == 'eofill' then
+		return (result % 2 == 1)
+	end
+end
+
 -- descend on quadtree, find leaf containing x,y, use leaf
 -- to evaluate the color, and finally return r,g,b,a
 local function sample(quadtree, xmin, ymin, xmax, ymax, x, y)
-    -- implement
-    return 1, 1, 1, 1
+	local child = quadtree
+	local parent = nil
+	while child do 
+		parent = child 
+		child = nextnode(child,x,y)
+	end
+
+	local p = {x,y}
+	local color,ncolor = {1,1,1,1}, {}
+
+	if not parent.scene then 
+--		dump(p)
+--		print(parent.depth)
+	end
+ 
+	if parent.scene then 
+		for k,e in pairs(parent.scene.elements) do 
+			if shapecallback(e,p) then 
+				local paintcallback = assert(colour[e.paint.type],
+					"no handler for " ..e.paint.type)
+					
+				ncolor = {paintcallback(e.paint,p) }
+				color = composecolor(color,ncolor)
+			end
+		end
+	end
+    return unpack(color)
 end
 
 -- this returns an iterator that prints the methods called
@@ -984,7 +1114,6 @@ local function scenetoleaf(scene, xmin, ymin, xmax, ymax)
 	leaf.xmax = xmax
 	leaf.ymin = ymin
 	leaf.ymax = ymax
-
     return leaf
 end
 
@@ -1021,8 +1150,6 @@ local function segmentnumber(scene)
 	end
 	return sum
 end
-count = 1
-
 
 -- recursively subdivides leaf to create the quadtree
 function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
@@ -1064,7 +1191,8 @@ local function dumpscenetree(quadtree, xmin, ymin, xmax, ymax,
 	
 	if quadtree.depth == 1 then svg.open({xmin,ymin,xmax,ymax}) end
 	if quadtree.children == nil then
-		svg.render(quadtree.scene,{xmin,ymin,xmax,ymax})
+		local viewport = {xmin,ymin,xmax,ymax}
+		svg.render(quadtree.scene,viewport)
 	else
 		if quadtree.children ~= nil then
 			for i,e in pairs(quadtree.children) do
