@@ -26,8 +26,10 @@ end
 local FLT_MIN = 1.17549435E-38 -- smallest-magnitude normalized single-precision
 local TOL = 0.01 -- root-finding tolerance, in pixels
 local MAX_ITER = 30 -- maximum number of bisection iterations in root-finding
-local MAX_DEPTH = 8 -- maximum quadtree depth
-local MIN_SEGMENTS = 11 -- minimun of segments in every leaf
+local MAX_DEPTH = 5 -- maximum quadtree depth
+local MIN_SEGS = 11 -- minimun of segments in every leaf
+local tx,ty = 0,0 --params for translate the scene
+local sx,sy = 1,1 --params for scale the scene
 
 local _M = driver.new()
 
@@ -165,6 +167,20 @@ local function cutr2s(a, b, x0, y0, x1, y1, w1, x2, y2)
     assert(ir0*ir2 >= 0, "canonization requires split!")
     local ir1 = sqrt(ir0*ir2)
     return u0*ir0, v0*ir0, u1*ir1, v1*ir1, r1*ir1, u2*ir2, v2*ir2
+end
+
+-- cut quadratic segment and recanonize
+local function cut2s(a, b, x0, y0, x1, y1, x2, y2)
+	-- P0
+    local u0 = lerp2(x0, x1, x2, a, a)
+    local v0 = lerp2(y0, y1, y2, a, a)
+	-- P1
+    local u1 = lerp2(x0, x1, x2, a, b)
+    local v1 = lerp2(y0, y1, y2, a, b)
+	-- P2
+    local u2 = lerp2(x0, x1, x2, b, b)
+    local v2 = lerp2(y0, y1, y2, b, b)
+    return u0, v0, u1, v1, u2, v2
 end
 
 -- here are functions to find a root in a rational quadratic
@@ -517,117 +533,48 @@ function transformpath(oldpath, xf)
     return newpath
 end
 
--- cliping function
--- This is to get the x coordinates
--- works for vertical lines
-local cx = {}
-cx.get = function(a,p)
-	return a[1]
-end
-
--- This is to get the y coordinates
--- works for horizontal lines
-local cy = {}
-cy.get  = function(a,p)
-	return a[2]
-end
-
-local bt = {}
-bt.get = function(u,v)
-	return u > v
-end
-
-local bte = {}
-bte.get = function(u,v)
-	return u >= v
-end
-
-local lt = {}
-lt.get = function(u,v)
-	return u < v
-end
-
-local lte = {}
-lte.get = function(u,v)
-	return u <= v
-end
-
-local function linear_intersection(x0,x1,w)
-	return (w - x0)/(x1 -x0)
-end
-
-local function quadratic_intersection(x0,x1,x2,w)
-	local a,b,c = quadratic_coefficients(x0,x1,x2)
-	local t
-	roots = { quadratic.quadratic(a,b,c-w)}
-	if roots[1] == 2 then
-		for i = 2,4,2 do
-			t = roots[i]/roots[i+1]
-			if t > 0 and t < 1 then
-				return t
-			end
-		end
-	end
-end
+-- c liping function
+local function cx(x,y) return x end -- To get the x coordinate
+local function cy(x,y) return y end -- To get the y coordinate
+local function bt(u,v)  return u > v  end
+local function bte(u,v) return u >= v end
+local function lt(u,v) 	return u < v  end
+local function lte(u,v) return u <= v end
 
 local function cubic_intersection(x0,x1,x2,x3,w)
-	local a,b,c,d = cubic_coefficients(x0,x1,x2,x3)
-	local t 
-	roots = { cubic.cubic(a,b,c,d-w) }
-	for i = 2,#roots-1,2 do 
-		t = roots[i]/roots[i+1]
-		if t > 0 and t < 1 then
-			return t
-		end
-	end
-	
-end
-
-local function rational_quadratic_intersection(x0,x1,w1,x2,x)
-	local a,b,c = quadratic_coefficients(x0,x1,x2)
-	local d,e,f = quadratic_coefficients(1,w1,1) 
-	local  ca, cb, cc = a - x*d, b - x*e, c - x*f
-
-	local root = {quadratic.quadratic(ca,cb,cc) }
-	if root[1] == 2 then
-		for i = 2,4,2 do
-			local t = root[i]/root[i+1]
-			if t >= 0 and t <= 1 then
-				return t
-			end
-		end
-	end
+	return bisectcubic(x0 - w, x1 -w, x2 -w,x3 -w)
 end
 
 -- c(Cooridinate): this will be cx o cy
 -- o: lt,lte,bt,bte
 -- value = {xvalue,yvalue}
-local function clip(c,o,value,forward)
+local function clip(c,op,value,forward)
+	local x,y = unpack(value)
 	local fx,fy = nil,nil -- the first point inside the path
 	local px,py -- the last point added to the new path
 
 	local iterator = {}
-
+	function iterator:teste()
+		print("AQUI") 
+		assert(false)
+	end
 	function iterator:begin_closed_contour(len,x0,y0)
-		if o.get(c.get({x0,y0}),c.get(value)) then
-			px, py = x0,y0
-			fx, fy = x0,y0
+		if op(c(x0,y0),c(x,y)) then
+			px, py,fx,fy = x0,y0,x0,y0
 			forward:begin_closed_contour(_,x0,y0)
 		end
 	end
 	iterator.begin_open_contour = iterator.begin_closed_contour
 	function iterator:linear_segment(x0,y0,x1,y1)
-		if o.get(c.get({x0,y0}),c.get(value))
-			and o.get(c.get({x1,y1}),c.get(value)) then
+		if op(c(x0,y0),c(x,y))and op(c(x1,y1),c(x,y)) then
 			if fx == nil then
 				fx, fy = x0,y0
 				forward:begin_closed_contour(_,fx,fy)
 			end
 			forward:linear_segment(x0,y0,x1,y1)
 			px,py = x1,y1
-		elseif not o.get(c.get({x0,y0}),c.get(value))
-			and o.get(c.get({x1,y1}),c.get(value)) then
-			local t = linear_intersection(c.get({x0,y0}),c.get({x1,y1}),c.get(value))
+		elseif not op(c(x0,y0),c(x,y)) and op(c(x1,y1),c(x,y)) then
+			local t = bisectline(c(x0,y0) - c(x,y),c(x1,y1) - c(x,y))
 			local px0 = lerp(x0,x1,t)
 			local py0 = lerp(y0,y1,t)
 			if fx == nil then
@@ -638,13 +585,12 @@ local function clip(c,o,value,forward)
 			end
 			forward:linear_segment(px0,py0,x1,y1)
 			px,py = x1,y1
-		elseif o.get(c.get({x0,y0}),c.get(value)) 
-			and not o.get(c.get({x1,y1}),c.get(value)) then
+		elseif op(c(x0,y0),c(x,y)) and not op(c(x1,y1),c(x,y)) then
 			if fx == nil then
 				fx, fy = x0,y0
 				forward:begin_closed_contour(_,fx,fy)
 			end
-			local t = linear_intersection(c.get({x0,y0}),c.get({x1,y1}),c.get(value))
+			local t = bisectline(c(x0,y0) - c(x,y),c(x1,y1) - c(x,y))
 			local px1 = lerp(x0,x1,t)
 			local py1 = lerp(y0,y1,t)
 			forward:linear_segment(x0,y0,px1,py1)
@@ -653,74 +599,62 @@ local function clip(c,o,value,forward)
 	end
 
 	function iterator:quadratic_segment(x0,y0,x1,y1,x2,y2)
-		if o.get(c.get({x0,y0}),c.get(value)) 
-			and o.get(c.get({x2,y2}),c.get(value)) then
+		if op(c(x0,y0),c(x,y)) and op(c(x2,y2),c(x,y)) then
 			if fx == nil then
 				fx, fy = x0,y0
 				forward:begin_closed_contour(_,fx,fy)
 			end
 			forward:quadratic_segment(x0,y0,x1,y1,x2,y2)
 			px,py = x2,y2
-		elseif not o.get(c.get({x0,y0}),c.get(value)) 
-			and o.get(c.get({x2,y2}),c.get(value)) then
-			local t = quadratic_intersection(c.get({x0,y0}),
-				c.get({x1,y1}),c.get({x2,y2}), c.get(value))
-			local px0 = lerp2(x0,x1,x2,t,t)
-			local py0 = lerp2(y0,y1,y2,t,t)
-
-			local px1 = lerp2(x0,x1,x2,t,1)
-			local py1 = lerp2(y0,y1,y2,t,1)
+		elseif not op(c(x0,y0),c(x,y)) and op(c(x2,y2),c(x,y)) then
+			local t = bisectquadratic(c(x0,y0) - c(x,y),
+				c(x1,y1) - c(x,y),c(x2,y2) - c(x,y))
+			local px0,py0,px1,py1 = cut2s(t,1,x0,y0,x1,y1,x2,y2)
 			if fx == nil then
 				fx, fy = px0,py0
 				forward:begin_closed_contour(_,fx,fy)
-			else
-				forward:linear_segment(px,py,px0,py0)
+			else 
+				forward:linear_segment(px,py,px0,py0) 
 			end
 			forward:quadratic_segment(px0,py0,px1,py1,x2,y2)
 			px,py = x2,y2
-
-		elseif o.get(c.get({x0,y0}),c.get(value)) 
-			and not o.get(c.get({x2,y2}),c.get(value)) then
+		elseif op(c(x0,y0),c(x,y)) and not op(c(x2,y2),c(x,y)) then
 			if fx == nil then
 				fx, fy = x0,y0
 				forward:begin_closed_contour(_,fx,fy)
 			end
-			local t = quadratic_intersection(c.get({x0,y0}),
-				c.get({x1,y1}),c.get({x2,y2}), c.get(value))
-			local px1 = lerp2(x0,x1,x2,0,t)
-			local py1 = lerp2(y0,y1,y2,0,t)
-
-			local px2 = lerp2(x0,x1,x2,t,t)
-			local py2 = lerp2(y0,y1,y2,t,t)
+			local t = bisectquadratic(c(x0,y0) - c(x,y),c(x1,y1) - c(x,y),c(x2,y2) - c(x,y))
+			local px0,py0,px1,py1,px2,py2 = cut2s(0,t,x0,y0,x1,y1,x2,y2)
 			forward:quadratic_segment(x0,y0,px1,py1,px2,py2)
 			px,py = px2,py2
 		end
 	end
 
 	function iterator:rational_quadratic_segment(x0,y0,x1,y1,w1,x2,y2)
-		if o.get(c.get({x0,y0}),c.get(value)) 
-			and o.get(c.get({x2,y2}),c.get(value)) then
+		if op(c(x0,y0),c(x,y)) and op(c(x2,y2),c(x,y)) then
 			if fx == nil then
 				fx, fy = x0,y0
 				forward:begin_closed_contour(_,fx,fy)
 			end
 			forward:rational_quadratic_segment(x0,y0,x1,y1,w1,x2,y2)
 			px,py = x2,y2
-		elseif not o.get(c.get({x0,y0}),c.get(value)) 
-			and o.get(c.get({x2,y2}),c.get(value)) then
-			local t = rational_quadratic_intersection(c.get({x0,y0}),c.get({x1,y1}),w1,c.get({x2,y2}),c.get(value)) 
+		elseif not op(c(x0,y0),c(x,y)) and op(c(x2,y2),c(x,y)) then
+			local t = bisectrationalquadratic(c(x0,y0) -c(x,y),
+				c(x1,y1) - w1*c(x,y),w1,
+				c(x2,y2) - c(x,y)) 
 			local px0,py0,px1,py1,pw1,px2,py2 = cutr2s(t,1,x0,y0,x1,y1,w1,x2,y2)
 			if fx == nil then
 				fx, fy = px0,py0
 				forward:begin_closed_contour(_,fx,fy)
-			else
-				forward:linear_segment(px,py,px0,py0)
+			else 
+				forward:linear_segment(px,py,px0,py0) 
 			end
 			forward:rational_quadratic_segment(px0,py0,px1,py1,pw1,x2,y2)
 			px,py = x2,y2
-		elseif o.get(c.get({x0,y0}),c.get(value))  
-			and not o.get(c.get({x2,y2}),c.get(value)) then
-			local t = rational_quadratic_intersection(c.get({x0,y0}),c.get({x1,y1}),w1,c.get({x2,y2}),c.get(value)) 
+		elseif op(c(x0,y0),c(x,y)) and not op(c(x2,y2),c(x,y)) then
+			local t = bisectrationalquadratic(c(x0,y0) -c(x,y),
+				c(x1,y1) - w1*c(x,y),w1,
+				c(x2,y2) - c(x,y)) 
 			if fx == nil then
 				fx, fy = x0,y0
 				forward:begin_closed_contour(_,fx,fy)
@@ -728,31 +662,28 @@ local function clip(c,o,value,forward)
 			local px0,py0,px1,py1,pw1,px2,py2 = cutr2s(0,t,x0,y0,x1,y1,w1,x2,y2)
 			forward:rational_quadratic_segment(x0,y0,px1,py1,pw1,px2,py2)
 			px,py = px2,py2
-
 		end
 	end
 
 	function iterator:cubic_segment(x0,y0,x1,y1,x2,y2,x3,y3)
-		if o.get(c.get({x0,y0}),c.get(value)) 
-			and o.get(c.get({x3,y3}),c.get(value)) then
+		if op(c(x0,y0),c(x,y)) 	and op(c(x3,y3),c(x,y)) then
 			if fx == nil then
 				fx, fy = x0,y0
 				forward:begin_closed_contour(_,fx,fy)
 			end
 			forward:cubic_segment(x0,y0,x1,y1,x2,y2,x3,y3)
 			px,py = x3,y3
-		elseif not o.get(c.get({x0,y0}),c.get(value)) 
-			and o.get(c.get({x3,y3}),c.get(value)) then
+		elseif not op(c(x0,y0),c(x,y)) and op(c(x3,y3),c(x,y)) then
 
-			local t = cubic_intersection(c.get({x0,y0}),c.get({x1,y1}),c.get({x2,y2}),c.get({x3,y3}),c.get(value))
+			local t = cubic_intersection(c(x0,y0),c(x1,y1),c(x2,y2),c(x3,y3),c(x,y))
 
 			local px0 = lerp3(x0,x1,x2,x3,t,t,t)
 			local py0 = lerp3(y0,y1,y2,y3,t,t,t)
 			if fx == nil then
 				fx, fy = px0,py0
 				forward:begin_closed_contour(_,fx,fy)
-			else
-				forward:linear_segment(px,py,px0,py0)
+			else 
+				forward:linear_segment(px,py,px0,py0) 
 			end
 
 			local px1 = lerp3(x0,x1,x2,x3,t,t,1)
@@ -763,14 +694,13 @@ local function clip(c,o,value,forward)
 
 			forward:cubic_segment(px0,py0,px1,py1,px2,py2,x3,y3)
 			px,py = x3,y3
-		elseif o.get(c.get({x0,y0}),c.get(value)) 
-			and not o.get(c.get({x3,y3}),c.get(value)) then
+		elseif op(c(x0,y0),c(x,y)) and not op(c(x3,y3),c(x,y)) then
 			if fx == nil then
 				fx, fy = x0,y0
 				forward:begin_closed_contour(_,fx,fy)
 			end
 
-			local t = cubic_intersection(c.get({x0,y0}),c.get({x1,y1}),c.get({x2,y2}),c.get({x3,y3}),c.get(value))
+			local t = cubic_intersection(c(x0,y0),c(x1,y1),c(x2,y2),c(x3,y3),c(x,y))
 
 			local px1 = lerp3(x0,x1,x2,x3,0,0,t)
 			local py1 = lerp3(y0,y1,y2,y3,0,0,t)
@@ -787,10 +717,11 @@ local function clip(c,o,value,forward)
 	end
 
 	function iterator:end_closed_contour(len)
-		if px ~= fx or py ~= fy then
-			forward:linear_segment(px,py,fx,fy)
-		end
-		forward:end_closed_contour(_)
+		if px ~= fx or py ~= fy then forward:linear_segment(px,py,fx,fy) end
+--		if not fx == nil then
+			forward:end_closed_contour(_)
+			fx,fy = nil,nil
+--		end
 	end
 	iterator.end_open_contour = iterator.end_closed_contour
 	return iterator
@@ -800,9 +731,7 @@ local function clippath(c,o,value,oldpath)
 	local newpath = _M.path()
 	newpath:open()
 	oldpath:iterate(
-		clip(c,o,value,
-			newcleaner(newpath)
-			)
+		clip(c,o,value,newcleaner(newpath))
 	)
 	newpath:close()
 	return newpath
@@ -919,88 +848,58 @@ end
 local function nextnode(quadtree,x,y)
 	if quadtree.children then
 		for i,e in pairs(quadtree.children) do
-			if insidenode(e,x,y) then
-				return e
-			end
+			if insidenode(e,x,y) then return e end
 		end
 	end
 	return nil
 end
 
 local function bb(xmin,ymin,xmax,ymax,p)
-	return (xmax > p[1]) and (ymax > p[2]) and (ymin <= p[2])
+	return (xmax >= p[1]) and (ymax > p[2]) and (ymin <= p[2])
 end
 
 
 local function path(path, p)
 	local winding = 0
     local iterator = {}
-	function iterator:begin_open_contour(len, x0, y0)
-    end
-    function iterator:begin_closed_contour(len, x0, y0)
-    end
+	function iterator:begin_open_contour(len, x0, y0) end
+    function iterator:begin_closed_contour(len, x0, y0) end
     function iterator:linear_segment(x0, y0, x1, y1)
---		if not bb(min(x0,x1),min(y0,y1),max(x0,x1),max(y0,y1),p) then return end
-		local a,b = linear_coefficients(y0,y1)
-		if a ~= 0 then
-			local t  = (-b+p[2]) /a
-			if t >= 0 and t < 1 then
-				if p[1] < lerp(x0,x1,t)then
-					winding = winding + sign(y1-y0)
-				end
-			end
+		if not bb(min(x0,x1),min(y0,y1),max(x0,x1),max(y0,y1),p) then return end
+		local t = bisectline(y0-p[2],y1 - p[2])
+		if p[1] < lerp(x0,x1,t)then
+			winding = winding + sign(y1-y0)
 		end
     end
     function iterator:quadratic_segment(x0, y0, x1, y1, x2, y2)
-		local a,b,c = quadratic_coefficients(y0,y1,y2)
-		local root = {quadratic.quadratic(a,b,c - p[2])}
-		if root[1] == 2 then
-			for i = 2,4,2 do
-				local t = root[i]/root[i+1]
-				if t >= 0 and t < 1 then
-					if p[1] < lerp2(x0,x1,x2,t,t)then
-						winding = winding + sign(2*a*t + b)
-					end
-				end
-			end
+		if not bb(min(x0,x2),min(y0,y2),max(x0,x2),max(y0,y2),p) then return end
+		local t = bisectquadratic(y0 - p[2], y1 - p[2], y2 - p[2])
+		if p[1] < lerp2(x0,x1,x2,t,t) then
+			winding = winding + sign(y2 - y0)
 		end
 	end
     function iterator:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
-		local a,b,c = quadratic_coefficients(y0,y1,y2)
-		local d,e,f = quadratic_coefficients(1,w1,1) 
-		local  ca, cb, cc = a - p[2]*d, b - p[2]*e, c - p[2]*f
-		local  dca, dcb, dcc = (a*e - b*d), 2*(a*f-c*d), b*f - c*e
-
-
-		local root = {quadratic.quadratic(ca,cb,cc) }
-		if root[1] == 2 then
-			for i = 2,4,2 do
-				local t = root[i]/root[i+1]
-				if t >= 0 and t < 1 then
-					if lerp2(1,w1,1,t,t)*p[1] < lerp2(x0,x1,x2,t,t) then
-						--winding = winding + sign(dca*t*t + dcb*t + dcc )
-						winding = winding + sign(y2- y0)
-					end
-				end
-			end
+		if not bb(min(x0,x2),min(y0,y2),max(x0,x2),max(y0,y2),p) then return end
+		local t = bisectrationalquadratic(y0-p[2],y1 - w1*p[2],w1,y2-p[2])
+		if lerp2(1,w1,1,t,t)*p[1] < lerp2(x0,x1,x2,t,t) then
+			winding = winding + sign(y2- y0)
 		end
     end
     function iterator:cubic_segment(x0, y0, x1, y1, x2, y2, x3, y3)
+		if not bb(min(x0,x3),min(y0,y3),max(x0,x3),max(y0,y3),p) then return end
 		local a,b,c,d = cubic_coefficients(y0,y1,y2,y3)
 		local root = {cubic.cubic(a,b,c,d -  p[2])}
 		for i = 2,#root-1,2 do
 			local t = root[i]/root[i+1]
 			if t >= 0 and t < 1 then
 				if p[1] < lerp3(x0,x1,x2,x3,t,t,t)then
-					winding = winding + sign(3*a*t^2 + 2*b*t + c)
+					winding = winding + sign(y3-y0)
 				end
 			end
 		end
     end
-    function iterator:end_open_contour(len)
-  	end
-    function iterator:end_closed_contour(len)
-    end
+    function iterator:end_open_contour(len) end
+    function iterator:end_closed_contour(len) end
    	path:iterate(iterator)
 	return winding 
 end
@@ -1024,49 +923,18 @@ local function sample(quadtree, xmin, ymin, xmax, ymax, x, y)
 		child = nextnode(child,x,y)
 	end
 
-	local p = {x,y}
-	local color,ncolor = {1,1,1,1}, {}
-
-	if not parent.scene then 
---		dump(p)
---		print(parent.depth)
-	end
- 
-	if parent.scene then 
-		for k,e in pairs(parent.scene.elements) do 
-			if shapecallback(e,p) then 
-				local paintcallback = assert(colour[e.paint.type],
-					"no handler for " ..e.paint.type)
-					
-				ncolor = {paintcallback(e.paint,p) }
-				color = composecolor(color,ncolor)
-			end
+	local p,color,ncolor = {x,y},{1,1,1,1}, {}
+	if not parent.scene then return unpack(color) end
+	for k,e in pairs(parent.scene.elements) do 
+		if shapecallback(e,p) then 
+			local paintcallback = assert(colour[e.paint.type],
+				"no handler for " ..e.paint.type)
+				
+			ncolor = {paintcallback(e.paint,p) }
+			color = composecolor(color,ncolor)
 		end
 	end
     return unpack(color)
-end
-
--- this returns an iterator that prints the methods called
--- and then forwards them on.
--- very useful for debugging!
-local function newtap(name, forward)
-    local newwrite = function(method)
-        return function(self, ...)
-            io.stderr:write(name, ":", method, "(")
-            for i = 1, select("#", ...) do
-                io.stderr:write(tostring(select(i, ...)), ",")
-            end
-            io.stderr:write(")\n")
-            forward[method](forward, ...)
-        end
-    end
-    return setmetatable({}, {
-        __index = function(tap, index)
-            local new = newwrite(index)
-            tap[index] = new
-            return new
-        end
-    })
 end
 
 -- return smallest power of 2 larger than n
@@ -1094,18 +962,6 @@ local function adjustviewport(vxmin, vymin, vxmax, vymax)
     return vxmin, vymin, vxmin+width, vymin+width
 end
 
--- load your own svg driver here and use it for debugging!
-
--- append lines marking the tree bounding box to the scene
-local function appendbox(xmin, ymin, xmax, ymax, scene)
-    -- implement
-end
-
--- recursively append the lines marking cell divisions to the scene
-local function appendtree(quadtree, xmin, ymin, xmax, ymax, scene)
-    -- implement
-end
-
 -- clip scene against bounding-box and return a quadtree leaf
 local function scenetoleaf(scene, xmin, ymin, xmax, ymax)
 	local leaf = {}
@@ -1125,6 +981,11 @@ local function clipbox(xmin,ymin,xmax,ymax,oldpath)
 	return shape
 end
 
+local function segmentnumber(scene)
+	local sum = 0 
+	for i,e in pairs(scene.elements) do sum = sum + e.shape.data[1] end
+	return sum
+end
 
 local function clipscene(xmin,ymin,xmax,ymax,scene)
 	xmin = xmin - 0.1
@@ -1134,34 +995,23 @@ local function clipscene(xmin,ymin,xmax,ymax,scene)
 	local newelements = { }
 	local shape 
 	for i,e in pairs(scene.elements) do 
---		shape = clipbox(xm,ymin,xmax,ym,e.shape)
 		shape = clipbox(xmin,ymin,xmax,ymax,e.shape)
-		if shape.data[1] ~= 0 then 
+		if #shape.instructions > 1 then 
 			newelements[#newelements + 1] = element.fill(shape,e.paint)
 		end
 	end
 	return sc.scene(newelements)
 end
 
-local function segmentnumber(scene)
-	local sum = 0 
-	for i,e in pairs(scene.elements) do 
-		sum = sum + e.shape.data[1]
-	end
-	return sum
-end
 
 -- recursively subdivides leaf to create the quadtree
 function subdividescene(leaf, xmin, ymin, xmax, ymax, maxdepth, depth)
     depth = depth or 1
 	leaf.depth = depth
 	if depth == maxdepth then return leaf end
-	if segmentnumber(leaf.scene) < MIN_SEGMENTS then return leaf end
+	if segmentnumber(leaf.scene) < MIN_SEGS then return leaf end
 
-	local xm = (xmax+xmin)/2
-	local ym = (ymax+ymin)/2
-
-	
+	local xm,ym = (xmax+xmin)/2,(ymax+ymin)/2
 	local lefttop     = clipscene(xmin,ym,xm,ymax,leaf.scene)
 	local righttop    = clipscene(xm,ym,xmax,ymax,leaf.scene)
 	local leftbottom  = clipscene(xmin,ymin,xm,ym,leaf.scene)
@@ -1185,11 +1035,7 @@ local svg = dofile"scenetree.lua"
 
 local function dumpscenetree(quadtree, xmin, ymin, xmax, ymax,
             scene, viewport, output)
-	-- appendbox(xmin, ymin, xmax, ymax, scene)
-	-- appendtree(quadtree, xmin, ymin, xmax, ymax, scene)
-    -- use your svg driver to dump contents to an SVG file
-	
-	if quadtree.depth == 1 then svg.open({xmin,ymin,xmax,ymax}) end
+	if quadtree.depth == 1 then svg.open(viewport) end
 	if quadtree.children == nil then
 		local viewport = {xmin,ymin,xmax,ymax}
 		svg.render(quadtree.scene,viewport)
@@ -1200,11 +1046,7 @@ local function dumpscenetree(quadtree, xmin, ymin, xmax, ymax,
 			end
 		end
 	end
-	if quadtree.depth == 1 then
-		local outsvg = assert(io.open("scenetree.svg", "wb"))
-		svg.close(outsvg)
-		outsvg:close()
-	end 
+	if quadtree.depth == 1 then svg.close(output) end 
 end
 
 function _M.render(scene, viewport, output, arguments)
@@ -1226,15 +1068,52 @@ function _M.render(scene, viewport, output, arguments)
             maxdepth = math.floor(n)
             return true
         end },
+        { "^(%-p:(%d+)(.*))$", function(all, n, e)
+			if not n then return false end
+			local aux = assert(tonumber(n), "invalid option "..all)
+            assert(aux >= 1, "invalid option " .. all)
+            p  = math.floor(aux)
+			return true
+		end},
+        { "^(%-segs:(%d+)(.*))$", function(all, n, e)
+			if not n then return false end
+			local aux = assert(tonumber(n), "invalid option "..all)
+            assert(aux >= 1, "invalid option " .. all)
+            MIN_SEGS  = math.floor(aux)
+			return true
+		end},
+        { "^(%-tx:(%d+)(.*))$", function(all, n, e)
+			if not n then return false end
+			tx = assert(tonumber(n), "invalid option "..all)
+			return true
+		end},
+
+        { "^(%-ty:(%d+)(.*))$", function(all, n, e)
+			if not n then return false end
+			ty = assert(tonumber(n), "invalid option "..all)
+			return true
+		end},
+        { "^(%-sx:(%d+)(.*))$", function(all, n, e)
+			if not n then return false end
+			sx = assert(tonumber(e), "invalid option "..all)
+			return true
+		end},
+        { "^(%-sy:(%d+)(.*))$", function(all, n, e)
+			if not n then return false end
+			sy = assert(tonumber(e), "invalid option "..all)
+			return true
+		end},
         { "^%-scenetree$", function(d)
             if not d then return false end
             scenetree = true
             return true
         end },
+
         { ".*", function(all)
             error("unrecognized option " .. all)
         end }
     }
+
     -- process options
     for i, argument in ipairs(arguments) do
         for j, option in ipairs(options) do
@@ -1243,6 +1122,11 @@ function _M.render(scene, viewport, output, arguments)
             end
         end
     end
+
+	if p then scene.elements = {scene.elements[p] } end
+	scene = scene:scale(sx,sy)
+	scene = scene:translate(tx,ty)
+
     -- create timer
     local time = chronos.chronos()
     -- make sure scene does not contain any unsuported content
