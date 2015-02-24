@@ -381,12 +381,9 @@ local function newmonotonizer(forward)
     monotonizer.begin_open_contour = monotonizer.begin_closed_contour
     function monotonizer:linear_segment(x0, y0, x1, y1)
         forward:linear_segment(px, py, x1, y1) 
-		-- o segmento linear não precisa ser monotonizado
     end
     function monotonizer:quadratic_segment(x0, y0, x1, y1, x2, y2)
-        --descobre as raízes de x'(t) e y'(t) ordena os t's e
-		--usa lerp2 pra descobrir os pontos de controle          
-        local t = { 0 }  
+        local t = { 0,1 }  
     
         if ( x0 + x2 ~= 2*x1 ) then
             -- caso a raiz não caia no intervalo [0,1],
@@ -406,22 +403,9 @@ local function newmonotonizer(forward)
             end
         end
 
-        t[#t + 1] = 1
-        --coloca os t's em ordem crescente ( Quick Sort)
         table.sort(t, quicksort)
         for i = 1, (#t - 1)  do
-            local px0 = lerp2(x0,x1,x2,t[i],t[i])
-            local py0 = lerp2(y0,y1,y2,t[i],t[i])
-
-            local px1 = lerp2(x0,x1,x2,t[i],t[i+1])
-            local py1 = lerp2(y0,y1,y2,t[i],t[i+1])
-
-            local px2 = lerp2(x0,x1,x2,t[i+1],t[i+1])
-            local py2 = lerp2(y0,y1,y2,t[i+1],t[i+1])
-
-            --já pode dar o foward do quadratic segment pra 
-			--esses 2 junto com o anterior
-            forward:quadratic_segment(px0,py0,px1,py1,px2,py2)
+            forward:quadratic_segment(cut2s(t[i],t[i+1],x0,y0,x1,y1,x2,y2))
         end
    end
     function monotonizer:rational_quadratic_segment(x0, y0, x1, y1, w1, x2, y2)
@@ -554,10 +538,6 @@ local function clip(c,op,value,forward)
 	local px,py -- the last point added to the new path
 
 	local iterator = {}
-	function iterator:teste()
-		print("AQUI") 
-		assert(false)
-	end
 	function iterator:begin_closed_contour(len,x0,y0)
 		if op(c(x0,y0),c(x,y)) then
 			px, py,fx,fy = x0,y0,x0,y0
@@ -717,11 +697,11 @@ local function clip(c,op,value,forward)
 	end
 
 	function iterator:end_closed_contour(len)
-		if px ~= fx or py ~= fy then forward:linear_segment(px,py,fx,fy) end
---		if not fx == nil then
+		if fx then
+			if px ~= fx or py ~= fy then forward:linear_segment(px,py,fx,fy) end
 			forward:end_closed_contour(_)
 			fx,fy = nil,nil
---		end
+		end
 	end
 	iterator.end_open_contour = iterator.end_closed_contour
 	return iterator
@@ -737,6 +717,56 @@ local function clippath(c,o,value,oldpath)
 	return newpath
 end
 
+local prepare = {}
+
+function prepare.solid(paint)
+	return paint
+end
+
+function prepare.lineargradient(paint)
+	local data = paint.data
+	local tp1 = xform.translate(unpack(data.p1)):inverse()
+	data.tp2 = {tp1:apply(unpack(data.p2))}
+	local degree = deg(atan2(data.tp2[2],data.tp2[1]))
+	local rot = xform.rotate(-degree)
+	-- rotate p2 to be in the x-axis
+	data.tp2 = {rot:apply(unpack(data.p2))}
+	local scale = xform.scale(1/data.tp2[1],1)
+	paint.data.tp2 = {scale:apply(unpack(data.p2))}
+	paint.xfs = scale*rot*tp1*paint.xfs:inverse()
+	return paint
+end
+
+function prepare.radialgradient(paint)
+	local data = paint.data
+	local center = data.center
+	local r = data.radius
+	-- use implicity representation
+	local a,b,f,g = 1,1,-center[2],-center[1]
+	local c = center[1]*center[1] + center[2]*center[2] - r*r
+	paint.circle = xform.xform(a,0,g, 0,b,f, g,f,c)
+	-- translate the focus to the origin
+	local tfocus = xform.translate(unpack(data.focus)):inverse()
+	-- translate the focus to the origin, center and the circle
+	data.tcenter = {tfocus:apply(unpack(data.center))}
+	paint.circle = tfocus:inverse():transpose() * paint.circle * tfocus:inverse() 
+	local degree = deg(atan2(data.tcenter[2],data.tcenter[1]))
+	local rot = xform.rotate(-degree)
+	data.tcenter = {rot:apply(unpack(data.tcenter))}
+	paint.circle = rot:inverse():transpose() * paint.circle * rot:inverse() 
+	
+	local tscale = xform.identity()
+	 paint.circlexCenter = 0 
+	if (data.tcenter[1] ~= 0) then 
+		tscale = xform.scale(1/data.tcenter[1])
+		paint.circlexCenter = 1
+	end
+	data.tcenter = {tscale:apply(unpack(data.tcenter))}
+	paint.circle = tscale:inverse():transpose() * paint.circle * tscale:inverse() 
+	paint.circleRadius = abs(paint.circle[3+6]/paint.circle[1] - 1)
+	paint.xfs = rot * tscale * tfocus * paint.xfs:inverse()
+	return paint 
+end
 
 
 -- prepare scene for sampling and return modified scene
@@ -746,45 +776,12 @@ local function preparescene(scene)
 	end
 	for i = 1,#scene.elements do
 		local e = scene.elements[i]
-		if e.paint['type'] == 'lineargradient' then
-			local p = e.paint
-			local tp1 = xform.translate(unpack(p.data.p1)):inverse()
-			p.data.tp2 = {tp1:apply(unpack(p.data.p2))}
-			local degree = deg(atan2(p.data.tp2[2],p.data.tp2[1]))
-			local rot = xform.rotate(-degree)
-			-- rotate p2 to be in the x-axis
-			p.data.tp2 = {rot:apply(unpack(p.data.p2))}
-			local scale = xform.scale(1/p.data.tp2[1],1)
-			p.data.tp2 = {scale:apply(unpack(p.data.p2))}
-			p.xfs = scale*rot*tp1*p.xfs:inverse()
-		end
-		if e.paint['type'] == 'radialgradient' then
-			local p = e.paint
-			local center = p.data.center
-			local r = p.data.radius
-			-- use implicity representation
-			local a,b,f,g = 1,1,-center[2],-center[1]
-			local c = center[1]*center[1] + center[2]*center[2] - r*r
-			p.circle = xform.xform(a,0,g, 0,b,f, g,f,c)
-			-- translate the focus to the origin
-			local tfocus = xform.translate(unpack(p.data.focus)):inverse()
-			-- translate the focus to the origin, center and the circle
-			p.data.tcenter = {tfocus:apply(unpack(p.data.center))}
-			p.circle = tfocus:inverse():transpose() * p.circle * tfocus:inverse() 
-			local degree = deg(atan2(p.data.tcenter[2],p.data.tcenter[1]))
-			local rot = xform.rotate(-degree)
-			p.data.tcenter = {rot:apply(unpack(p.data.tcenter))}
-			p.circle = rot:inverse():transpose() * p.circle * rot:inverse() 
-			local centerscale = 1/p.data.tcenter[1]
-			local tscale = xform.scale(centerscale)
-			p.data.tcenter = {tscale:apply(unpack(p.data.tcenter))}
-			p.circle = tscale:inverse():transpose() * p.circle * tscale:inverse() 
-			p.circleRadius = abs(p.circle[3+6]/p.circle[1] - 1)
-			p.xf = rot * tscale * tfocus * p.xfs:inverse()
-		end
-		if e.shape['type'] == 'path' then
-			e.shape = transformpath(e.shape,scene.xf)
-		end
+
+		e.shape = transformpath(e.shape,scene.xf)
+		local preparecallback = assert(prepare[e.paint.type],
+				"no handler for " ..e.paint.type)
+
+		e.paint = preparecallback(e.paint)
 	end
 	return scene
 end
@@ -804,10 +801,10 @@ function colour.lineargradient(paint,p)
 end
 
 function colour.radialgradient(paint,p)
-	local x,y,w = paint.xf:apply(p[1],p[2])
+	local x,y,w = paint.xfs:apply(p[1],p[2])
 	local a = x*x + y*y
 	local b = -2*x
-	local c = 1 - paint.circleRadius
+	local c = paint.circlexCenter - paint.circleRadius
 	local root = {quadratic.quadratic(a,b,c)}
 	local t = abs(root[3]/root[2]) % 1
 	local r,g,b,a = ajusttoramp(paint.data.ramp,t)
