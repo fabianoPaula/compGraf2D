@@ -14,9 +14,10 @@ local max    = math.max
 local unpack = table.unpack
 local floor  = math.floor
 local abs    = math.abs
-local deg   = math.deg
+local deg    = math.deg
 local atan2  = math.atan2
-local inf   = math.huge
+local inf    = math.huge
+local pow    = math.pow
 
 -- output formatted string to stderr
 local function stderr(...)
@@ -28,6 +29,7 @@ local TOL = 0.01 -- root-finding tolerance, in pixels
 local MAX_ITER = 30 -- maximum number of bisection iterations in root-finding
 local MAX_DEPTH = 5 -- maximum quadtree depth
 local MIN_SEGS = 11 -- minimun of segments in every leaf
+local GAMMA_APPLY = 1 -- gamma quantity
 local tx,ty = 0,0 --params for translate the scene
 local sx,sy = 1,1 --params for scale the scene
 
@@ -107,18 +109,6 @@ local function sign(n)
 		return 0
 	end
 end
-
-local function composecolor(color,ncolor)
-	local r, g, b, a = unpack(color)
-	local nr, ng, nb, alpha = unpack(ncolor)
-
-	r = alpha*nr + (1-alpha)*r
-	g = alpha*ng + (1-alpha)*g
-	b = alpha*nb + (1-alpha)*b
-
-	return {r,g,b,a}
-end
-
 
 -- begin gradient functions
 local function ajusttoramp(ramp,x)
@@ -719,8 +709,22 @@ end
 
 local prepare = {}
 
+function prepare.alpha(r,g,b,a)
+--	r,g,b = a*r, a*g, a*b
+	return r, g , b, a 
+end
+
 function prepare.solid(paint)
+	local r,g,b,a = unpack(paint.data)
+	paint.data = {prepare.alpha(r,g,b,a)}
 	return paint
+end
+
+function prepare.ramp(ramp)
+	for i = 2,#ramp,2 do
+		local r,g,b,a = unpack(ramp[i])
+		ramp[i] = {prepare.alpha(r,g,b,a)}
+	end
 end
 
 function prepare.lineargradient(paint)
@@ -730,10 +734,12 @@ function prepare.lineargradient(paint)
 	local degree = deg(atan2(data.tp2[2],data.tp2[1]))
 	local rot = xform.rotate(-degree)
 	-- rotate p2 to be in the x-axis
-	data.tp2 = {rot:apply(unpack(data.p2))}
-	local scale = xform.scale(1/data.tp2[1],1)
-	paint.data.tp2 = {scale:apply(unpack(data.p2))}
+	data.tp2 = {rot:apply(unpack(data.tp2))}
+	local scale = xform.identity()
+	if data.tp2[1] > FLT_MIN then scale = xform.scale(1/data.tp2[1],1) end
 	paint.xfs = scale*rot*tp1*paint.xfs:inverse()
+
+	prepare.ramp(paint.data.ramp)
 	return paint
 end
 
@@ -765,6 +771,8 @@ function prepare.radialgradient(paint)
 	paint.circle = tscale:inverse():transpose() * paint.circle * tscale:inverse() 
 	paint.circleRadius = abs(paint.circle[3+6]/paint.circle[1] - 1)
 	paint.xfs = rot * tscale * tfocus * paint.xfs:inverse()
+
+	prepare.ramp(paint.data.ramp,paint.opacity)
 	return paint 
 end
 
@@ -788,16 +796,27 @@ end
 
 local colour = {}
 
+function colour.opacity(o,r,g,b,a)
+	return r, g, b, a*o
+end
+
 function colour.solid(paint,p)
-	local r,g,b,a = unpack(paint.data)
-	return paint.opacity*r,paint.opacity*g, paint.opacity*b,paint.opacity*a
+	return colour.opacity(paint.opacity,unpack(paint.data))
+end
+
+function colour.normalizegradient(x)
+	if x > 1 then 
+		return 1
+	elseif x < 0 then 
+		return 0 
+	end
+	return abs(x)
 end
 
 function colour.lineargradient(paint,p)
 	local x,y,w = paint.xfs:apply(p[1],p[2])
-	local result  = abs(x) % 1
-	local r,g,b,a = ajusttoramp(paint.data.ramp,result)
-	return paint.opacity*r,paint.opacity*g, paint.opacity*b, paint.opacity*a
+	local result  = colour.normalizegradient(x)
+	return colour.opacity(paint.opacity,ajusttoramp(paint.data.ramp,result))
 end
 
 function colour.radialgradient(paint,p)
@@ -806,19 +825,17 @@ function colour.radialgradient(paint,p)
 	local b = -2*x
 	local c = paint.circlexCenter - paint.circleRadius
 	local root = {quadratic.quadratic(a,b,c)}
-	local t = abs(root[3]/root[2]) % 1
-	local r,g,b,a = ajusttoramp(paint.data.ramp,t)
-	return paint.opacity*r,paint.opacity*g, paint.opacity*b,paint.opacity*a
+	local result = colour.normalizegradient(root[3]/root[2])
+	return colour.opacity(paint.opacity,ajusttoramp(paint.data.ramp,result))
 end
 
-
-local function composecolor(color,ncolor)
+function colour.composecolor(color,ncolor)
 	local r, g, b, a = unpack(color)
 	local nr, ng, nb, alpha = unpack(ncolor)
 
-	r = alpha*nr + (1-alpha)*r
-	g = alpha*ng + (1-alpha)*g
-	b = alpha*nb + (1-alpha)*b
+	r = lerp(r,nr,alpha)
+	g = lerp(g,ng,alpha)
+	b = lerp(b,nb,alpha)
 
 	return {r,g,b,a}
 end
@@ -852,7 +869,7 @@ local function nextnode(quadtree,x,y)
 end
 
 local function bb(xmin,ymin,xmax,ymax,p)
-	return (xmax >= p[1]) and (ymax > p[2]) and (ymin <= p[2])
+	return (xmax >= p[1])and(ymax > p[2])and(ymin <= p[2])
 end
 
 
@@ -928,7 +945,7 @@ local function sample(quadtree, xmin, ymin, xmax, ymax, x, y)
 				"no handler for " ..e.paint.type)
 				
 			ncolor = {paintcallback(e.paint,p) }
-			color = composecolor(color,ncolor)
+			color = colour.composecolor(color,ncolor)
 		end
 	end
     return unpack(color)
