@@ -1174,7 +1174,7 @@ function _M.render(scene, viewport, output, arguments)
     for i = 1, height do
         stderr("\r%d%%", floor(1000*i/height)/10)
         for j = 1, width do
-            local x, y = vxmin+j-.5, vymin+i-5
+            local x, y = vxmin+j-.5, vymin+i-.5
             local r, g, b, a = sample(quadtree,
                 qxmin, qymin, qxmax, qymax, x, y)
             outputimage:set(j, i, r, g, b, a)
